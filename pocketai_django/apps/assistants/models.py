@@ -17,7 +17,7 @@ class CustomAssistant(models.Model):
     Chat-first assistant configuration.
 
     Custom Assistants own reusable instructions/persona for chat sessions. They
-    are not runnable background automations and never own AgentRun records.
+    are not runnable background agentic_tasks and never own AgentRun records.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

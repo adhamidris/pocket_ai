@@ -209,16 +209,16 @@
         <span class="sidebar-label">{% trans "Custom Assistants" %}</span>
       </a>
       <a
-        href="{% url 'frontend:dashboard-automations' %}"
-        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'automations' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
-        title="{% trans 'Automations' %}"
+        href="{% url 'frontend:dashboard-agentic-tasks' %}"
+        class="sidebar-link w-full block text-left px-3 py-2 rounded-md text-sm flex items-center gap-3 {% if active == 'agentic-tasks' %}bg-primary/10 text-primary{% else %}hover:bg-muted/60{% endif %}"
+        title="{% trans 'Agentic Tasks' %}"
       >
-        <svg class="sidebar-icon h-4 w-4 {% if active == 'automations' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+        <svg class="sidebar-icon h-4 w-4 {% if active == 'agentic-tasks' %}text-primary{% else %}text-muted-foreground{% endif %}" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l3.75 2.25" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-2.636-6.364" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M18 3.75h3v3" />
         </svg>
-        <span class="sidebar-label">{% trans "Automations" %}</span>
+        <span class="sidebar-label">{% trans "Agentic Tasks" %}</span>
       </a>
       <a
         href="{% url 'frontend:dashboard-knowledge' %}"

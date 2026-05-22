@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .run_shared import *  # noqa: F403
+from apps.agentic_tasks.processing import ensure_task_conversation
 
 @csrf_protect
 @require_http_methods(["GET", "POST"])
@@ -12,7 +13,7 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
     with tenant_context(agent.business_profile_id):
         if request.method == "GET":
             qs = (
-                AgentRun.objects.select_related("automation")
+                AgentRun.objects.select_related("agentic_task")
                 .prefetch_related("artifacts")
                 .filter(agent_profile=agent)
                 .filter(_run_visibility_filter(request, agent=agent))
@@ -21,16 +22,16 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
             kind = str(request.GET.get("kind") or request.GET.get("type") or "").strip().lower()
             if kind in {"custom_assistant", "custom_assistants", "assistant", "assistants", "manual"}:
                 qs = qs.none()
-            elif kind in {"automation", "automations", "scheduled_task", "scheduled_tasks", "background"}:
-                qs = qs.filter(automation__isnull=False)
+            elif kind in {"agentic_task", "agentic_tasks", "scheduled_task", "scheduled_tasks", "background"}:
+                qs = qs.filter(agentic_task__isnull=False)
             status = str(request.GET.get("status") or "").strip().lower()
             if status:
                 qs = qs.filter(status=status)
-            automation_id, err = _parse_uuid(request.GET.get("automationId") or request.GET.get("automation_id"), field="automationId")
+            agentic_task_id, err = _parse_uuid(request.GET.get("agenticTaskId"), field="agenticTaskId")
             if err:
                 return err
-            if automation_id:
-                qs = qs.filter(automation_id=automation_id)
+            if agentic_task_id:
+                qs = qs.filter(agentic_task_id=agentic_task_id)
             limit = max(1, min(int(str(request.GET.get("limit") or "50")), 200))
             offset = max(0, int(str(request.GET.get("offset") or "0")))
             return JsonResponse({"runs": [_serialize_run(item) for item in qs[offset : offset + limit]], "total": qs.count(), "limit": limit, "offset": offset}, status=HTTPStatus.OK)
@@ -38,14 +39,14 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
         payload, error = _parse_json_body(request)
         if error:
             return error
-        automation_id, err = _parse_uuid((payload or {}).get("automationId") or (payload or {}).get("automation_id"), field="automationId")
+        agentic_task_id, err = _parse_uuid((payload or {}).get("agenticTaskId"), field="agenticTaskId")
         if err:
             return err
-        automation = None
-        if automation_id:
-            automation = Automation.objects.filter(id=automation_id, agent_profile=agent).first()
-            if automation is None:
-                return JsonResponse({"error": "AUTOMATION_NOT_FOUND", "message": "Automation not found."}, status=HTTPStatus.NOT_FOUND)
+        agentic_task = None
+        if agentic_task_id:
+            agentic_task = AgenticTask.objects.filter(id=agentic_task_id, agent_profile=agent).first()
+            if agentic_task is None:
+                return JsonResponse({"error": "TASK_NOT_FOUND", "message": "Agentic Task not found."}, status=HTTPStatus.NOT_FOUND)
         conversation_id, err = _parse_uuid((payload or {}).get("conversationId") or (payload or {}).get("conversation_id"), field="conversationId")
         if err:
             return err
@@ -54,23 +55,23 @@ def agent_runs_collection(request: HttpRequest, agent_id: uuid.UUID) -> JsonResp
             conversation = Conversation.objects.filter(id=conversation_id, business_profile=agent.business_profile).first()
             if conversation is None:
                 return JsonResponse({"error": "CONVERSATION_NOT_FOUND", "message": "Conversation not found."}, status=HTTPStatus.NOT_FOUND)
-        elif automation and automation.conversation_id:
-            conversation = automation.conversation
-        visibility = str((payload or {}).get("visibility") or (automation.visibility if automation else AgentRunVisibility.INITIATOR)).strip().lower()
+        elif agentic_task:
+            conversation = ensure_task_conversation(agentic_task)
+        visibility = str((payload or {}).get("visibility") or (agentic_task.visibility if agentic_task else AgentRunVisibility.INITIATOR)).strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid visibility."}, status=HTTPStatus.BAD_REQUEST)
-        source = str((payload or {}).get("source") or (AgentRunSource.AUTOMATION if automation else AgentRunSource.CHAT)).strip().lower()
+        source = str((payload or {}).get("source") or (AgentRunSource.TASK if agentic_task else AgentRunSource.CHAT)).strip().lower()
         if source not in {choice for choice, _ in AgentRunSource.choices}:
             return JsonResponse({"error": "VALIDATION_ERROR", "message": "Invalid source."}, status=HTTPStatus.BAD_REQUEST)
         run = _create_run(
             agent=agent,
             created_by=request.user,
-            automation=automation,
+            agentic_task=agentic_task,
             conversation=conversation,
-            title=str((payload or {}).get("title") or (automation.name if automation else "")),
+            title=str((payload or {}).get("title") or (agentic_task.name if agentic_task else "")),
             source=source,
             visibility=visibility,
-            snapshot=_run_snapshot(automation, (payload or {}).get("runSnapshot") or (payload or {}).get("automation") or {}),
+            snapshot=_run_snapshot(agentic_task, (payload or {}).get("runSnapshot") or (payload or {}).get("agentic_task") or {}),
             metadata=dict((payload or {}).get("metadata") or {}),
         )
         return JsonResponse({"run": _serialize_run(run)}, status=HTTPStatus.CREATED)
@@ -199,7 +200,7 @@ def _run_note_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
         business_profile=run.business_profile,
         scope=MemoryScope.RUN,
         agent_profile=run.agent_profile,
-        automation=run.automation,
+        agentic_task=run.agentic_task,
         run=run,
         conversation=run.conversation,
         kind=kind,
@@ -210,12 +211,12 @@ def _run_note_action(request: HttpRequest, agent_id: uuid.UUID, run_id: uuid.UUI
         status=MemoryStatus.ACTIVE,
         created_by=request.user,
     )
-    if run.automation_id:
+    if run.agentic_task_id:
         MemoryItem.objects.create(
             business_profile=run.business_profile,
-            scope=MemoryScope.AUTOMATION,
+            scope=MemoryScope.TASK,
             agent_profile=run.agent_profile,
-            automation=run.automation,
+            agentic_task=run.agentic_task,
             run=run,
             conversation=run.conversation,
             kind=kind,
@@ -253,9 +254,9 @@ def agent_run_checkpoint_resolve(request: HttpRequest, agent_id: uuid.UUID, chec
 
     with tenant_context(agent.business_profile_id):
         checkpoint = (
-            AgentRunCheckpoint.objects.select_related("run", "automation", "conversation")
+            AgentRunCheckpoint.objects.select_related("run", "agentic_task", "conversation")
             .filter(id=checkpoint_id, business_profile=agent.business_profile)
-            .filter(Q(automation__agent_profile=agent) | Q(run__agent_profile=agent))
+            .filter(Q(agentic_task__agent_profile=agent) | Q(run__agent_profile=agent))
             .first()
         )
         if checkpoint is None:
@@ -285,7 +286,7 @@ def agent_run_checkpoint_resolve(request: HttpRequest, agent_id: uuid.UUID, chec
             business_profile=run.business_profile,
             scope=MemoryScope.RUN,
             agent_profile=run.agent_profile,
-            automation=run.automation,
+            agentic_task=run.agentic_task,
             run=run,
             conversation=run.conversation,
             kind=MemoryKind.DECISION if checkpoint.kind == AgentRunCheckpointKind.APPROVAL else MemoryKind.STATE_NOTE,
@@ -356,8 +357,9 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
 
     now = timezone.now()
     stale_before = now - timedelta(seconds=90)
-    automation_heartbeat = cache.get("automation_processor_heartbeat")
-    run_heartbeat = cache.get("agent_run_processor_heartbeat")
+    agentic_task_schedule_heartbeat = cache.get("agentic_task_processor_heartbeat")
+    agentic_task_run_heartbeat = cache.get("agentic_task_run_processor_heartbeat")
+    sub_agent_run_heartbeat = cache.get("sub_agent_run_processor_heartbeat")
 
     def _heartbeat_payload(value: object) -> dict[str, object]:
         if not isinstance(value, dict):
@@ -376,19 +378,25 @@ def agent_operations_status(request: HttpRequest, agent_id: uuid.UUID) -> JsonRe
 
     with tenant_context(agent.business_profile_id):
         runs = AgentRun.objects.filter(agent_profile=agent)
-        automations = Automation.objects.filter(agent_profile=agent)
+        agentic_tasks = AgenticTask.objects.filter(agent_profile=agent)
+        schedule_processor = _heartbeat_payload(agentic_task_schedule_heartbeat)
+        task_run_processor = _heartbeat_payload(agentic_task_run_heartbeat)
+        sub_agent_processor = _heartbeat_payload(sub_agent_run_heartbeat)
         payload = {
             "operations": {
-                "taskProcessingActive": bool(_heartbeat_payload(automation_heartbeat)["active"] and _heartbeat_payload(run_heartbeat)["active"]),
-                "automationProcessor": _heartbeat_payload(automation_heartbeat),
-                "runProcessor": _heartbeat_payload(run_heartbeat),
-                "dueAutomations": automations.filter(
-                    status=AutomationStatus.ACTIVE,
-                    trigger_type=AutomationTriggerType.SCHEDULE,
+                "taskProcessingActive": bool(schedule_processor["active"] and task_run_processor["active"]),
+                "agenticTaskProcessor": schedule_processor,
+                "agenticTaskRunProcessor": task_run_processor,
+                "subAgentRunProcessor": sub_agent_processor,
+                "dueAgenticTasks": agentic_tasks.filter(
+                    status=AgenticTaskStatus.ACTIVE,
+                    schedule_enabled=True,
                     next_trigger_at__lte=now,
                 ).count(),
-                "queuedRuns": runs.filter(status=AgentRunStatus.QUEUED).count(),
-                "runningRuns": runs.filter(status=AgentRunStatus.RUNNING).count(),
+                "queuedTaskRuns": runs.filter(agentic_task_id__isnull=False, status=AgentRunStatus.QUEUED).count(),
+                "runningTaskRuns": runs.filter(agentic_task_id__isnull=False, status=AgentRunStatus.RUNNING).count(),
+                "queuedSubAgentRuns": runs.filter(agentic_task_id__isnull=True, status=AgentRunStatus.QUEUED).count(),
+                "runningSubAgentRuns": runs.filter(agentic_task_id__isnull=True, status=AgentRunStatus.RUNNING).count(),
                 "failedRuns": runs.filter(status=AgentRunStatus.FAILED).count(),
             },
         }

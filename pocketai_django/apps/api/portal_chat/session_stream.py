@@ -34,12 +34,22 @@ from apps.conversations.portal import (
 )
 from apps.conversations.portal_session.event_bus import (
     portal_session_agent_requests_stream_key,
-    portal_session_agent_automation_runs_stream_key,
+    portal_session_agent_agentic_task_runs_stream_key,
     portal_session_conversation_stream_key,
 )
 from apps.conversations.portal_turn.events import get_portal_redis_client
 from apps.rag.observability.logging import structured_log
 from core.tenancy import tenant_context
+
+
+def _portal_redis_client(*, socket_timeout_seconds: float):
+    try:
+        from apps.api import chat_portal as chat_portal_facade
+
+        client_factory = getattr(chat_portal_facade, "get_portal_redis_client", get_portal_redis_client)
+    except Exception:
+        client_factory = get_portal_redis_client
+    return client_factory(socket_timeout_seconds=socket_timeout_seconds)
 
 
 @require_GET
@@ -143,7 +153,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
         redis_conn = None
         redis_stream_positions: dict[str, str] = {}
         if session_bus == "redis":
-            redis_conn = get_portal_redis_client(socket_timeout_seconds=20.0)
+            redis_conn = _portal_redis_client(socket_timeout_seconds=20.0)
             if redis_conn is not None and conversation_id:
                 start_id = _parse_session_since_id(request)
                 if not start_id:
@@ -152,7 +162,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                 redis_stream_positions[portal_session_conversation_stream_key(conversation_id=conversation_id)] = start_id
                 if agent_workforce_enabled and agent_profile_id:
                     redis_stream_positions[portal_session_agent_requests_stream_key(agent_profile_id=agent_profile_id)] = start_id
-                    redis_stream_positions[portal_session_agent_automation_runs_stream_key(agent_profile_id=agent_profile_id)] = start_id
+                    redis_stream_positions[portal_session_agent_agentic_task_runs_stream_key(agent_profile_id=agent_profile_id)] = start_id
             else:
                 redis_conn = None
                 session_bus = "postgres"
@@ -263,7 +273,7 @@ def events(request: HttpRequest) -> StreamingHttpResponse:
                             event_filter |= Q(
                                 run__business_profile_id=business_id,
                                 run__agent_profile_id=agent_profile_id,
-                                run__automation_id__isnull=False,
+                                run__agentic_task_id__isnull=False,
                             )
                         events_batch = list(
                             AgentRunEvent.objects.select_related("run")

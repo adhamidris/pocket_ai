@@ -18,11 +18,17 @@ class AgentRunQueueRetryMixin:
         now = timezone.now()
         cutoff = now - timedelta(seconds=max(10.0, float(self.lease_seconds)))
         with tenant_bypass():
-            stale = list(
+            qs = (
                 AgentRun.objects.filter(status=AgentRunStatus.RUNNING)
                 .filter(Q(lease_expires_at__lt=now) | Q(lease_expires_at__isnull=True, started_at__lt=cutoff))
-                .order_by("started_at")[: max(1, int(limit))]
+                .order_by("started_at")
             )
+            run_kind = str(getattr(self, "run_kind", "all") or "all").strip().lower()
+            if run_kind == "sub_agent":
+                qs = qs.filter(agentic_task_id__isnull=True)
+            elif run_kind == "agentic_task":
+                qs = qs.filter(agentic_task_id__isnull=False)
+            stale = list(qs[: max(1, int(limit))])
         if not stale:
             return 0
         for run in stale:

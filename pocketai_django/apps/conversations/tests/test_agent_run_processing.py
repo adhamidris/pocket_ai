@@ -20,7 +20,7 @@ from apps.agent_runs.models import (
     AgentRunSource,
     AgentRunStatus,
 )
-from apps.automations.models import Automation, AutomationStatus
+from apps.agentic_tasks.models import AgenticTask, AgenticTaskStatus
 from apps.conversations.models import (
     Conversation,
 )
@@ -122,15 +122,15 @@ class AgentRunProcessingTests(TestCase):
         self.assertEqual(run.conversation_id, anchor.id)
         self.assertEqual(str(run.execution_conversation_id or ""), str(getattr(called_conversation, "id", "")))
 
-    def test_workflow_run_persists_report_state_and_notification(self) -> None:
-        workflow = Automation.objects.create(
+    def test_workflow_run_persists_report_state_without_notification_suppression(self) -> None:
+        workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Subscription checker",
-            status=AutomationStatus.ACTIVE,
-            trigger_type="schedule",
-            trigger_config={"cron": "* * * * *"},
+            status=AgenticTaskStatus.ACTIVE,
+            schedule_enabled=True,
+            schedule_config={"cron": "* * * * *"},
             instructions={"goal": "Check subscriptions"},
         )
         anchor = Conversation.objects.create(
@@ -139,12 +139,12 @@ class AgentRunProcessingTests(TestCase):
             session_token="workflow-anchor",
             metadata={"actor_user_id": str(self.user.id), "type": "workflow_thread"},
         )
-        workflow.conversation = anchor
-        workflow.save(update_fields=["conversation", "updated_at"])
+        workflow.active_conversation = anchor
+        workflow.save(update_fields=["active_conversation", "updated_at"])
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            automation=workflow,
+            agentic_task=workflow,
             conversation=anchor,
             created_by=self.user,
             title="Subscription checker",
@@ -174,7 +174,7 @@ class AgentRunProcessingTests(TestCase):
         self.assertIn("run_report", run.result)
         workflow.refresh_from_db()
         self.assertIn("last_run_report", workflow.state)
-        self.assertTrue(AgentRunNotification.objects.filter(run=run, status="delivered").exists())
+        self.assertFalse(AgentRunNotification.objects.filter(run=run).exists())
 
     def test_portal_serializer_exposes_structured_run_report_and_clean_display(self) -> None:
         run_report = {
@@ -207,12 +207,12 @@ class AgentRunProcessingTests(TestCase):
         self.assertNotIn("rawDebug", payload["display"])
 
     def test_portal_serializer_exposes_canonical_live_run_fields(self) -> None:
-        workflow = Automation.objects.create(
+        workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AutomationStatus.ACTIVE,
+            status=AgenticTaskStatus.ACTIVE,
             instructions={"goal": "Monitor inbox"},
         )
         started = timezone.now()
@@ -221,9 +221,9 @@ class AgentRunProcessingTests(TestCase):
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
-            automation=workflow,
+            agentic_task=workflow,
             title="Sales monitor",
-            source=AgentRunSource.AUTOMATION,
+            source=AgentRunSource.TASK,
             status=AgentRunStatus.WAITING_APPROVAL,
             started_at=started,
             finished_at=finished,
@@ -237,7 +237,7 @@ class AgentRunProcessingTests(TestCase):
         )
         checkpoint = AgentRunCheckpoint.objects.create(
             business_profile=self.business,
-            automation=workflow,
+            agentic_task=workflow,
             run=run,
             kind=AgentRunCheckpointKind.APPROVAL,
             status=AgentRunCheckpointStatus.OPEN,
@@ -247,8 +247,8 @@ class AgentRunProcessingTests(TestCase):
 
         payload = serialize_agent_run_for_portal(run)
 
-        self.assertEqual(payload["automationId"], str(workflow.id))
-        self.assertEqual(payload["automationName"], workflow.name)
+        self.assertEqual(payload["agenticTaskId"], str(workflow.id))
+        self.assertEqual(payload["agenticTaskName"], workflow.name)
         self.assertEqual(payload["durationMs"], 12000)
         self.assertEqual(payload["metadata"], {"trigger": "manual"})
         self.assertEqual(payload["result"]["responseText"], "Draft ready.")
@@ -338,20 +338,20 @@ class AgentRunProcessingTests(TestCase):
         self.assertFalse(any(event.payload.get("kind") == "assistant_message" for event in events))
 
     def test_forced_final_tool_loop_marks_run_failed(self) -> None:
-        workflow = Automation.objects.create(
+        workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AutomationStatus.ACTIVE,
-            trigger_type="schedule",
-            trigger_config={"cron": "* * * * *"},
+            status=AgenticTaskStatus.ACTIVE,
+            schedule_enabled=True,
+            schedule_config={"cron": "* * * * *"},
             instructions={"goal": "Find sales emails and send a report"},
         )
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            automation=workflow,
+            agentic_task=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,
@@ -391,20 +391,20 @@ class AgentRunProcessingTests(TestCase):
         self.assertTrue(run.finished_at)
 
     def test_dsml_final_output_marks_workflow_run_failed_without_notification(self) -> None:
-        workflow = Automation.objects.create(
+        workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AutomationStatus.ACTIVE,
-            trigger_type="schedule",
-            trigger_config={"cron": "* * * * *"},
+            status=AgenticTaskStatus.ACTIVE,
+            schedule_enabled=True,
+            schedule_config={"cron": "* * * * *"},
             instructions={"goal": "Find sales emails and send a report", "memory_shape": "email_monitor"},
         )
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            automation=workflow,
+            agentic_task=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,
@@ -437,14 +437,14 @@ class AgentRunProcessingTests(TestCase):
         self.assertFalse(AgentRunNotification.objects.filter(run=run).exists())
 
     def test_workflow_run_injects_wake_up_prompt_and_compact_memory(self) -> None:
-        workflow = Automation.objects.create(
+        workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AutomationStatus.ACTIVE,
-            trigger_type="schedule",
-            trigger_config={"cron": "* * * * *"},
+            status=AgenticTaskStatus.ACTIVE,
+            schedule_enabled=True,
+            schedule_config={"cron": "* * * * *"},
             instructions={
                 "goal": "Find sales emails",
                 "wake_up_prompt": "Check new unread messages for sales intent and do not reread inspected IDs.",
@@ -463,7 +463,7 @@ class AgentRunProcessingTests(TestCase):
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            automation=workflow,
+            agentic_task=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,
@@ -495,21 +495,21 @@ class AgentRunProcessingTests(TestCase):
         self.assertIn("msg-1", user_message)
 
     def test_workflow_memory_writeback_merges_report_and_email_trace(self) -> None:
-        workflow = Automation.objects.create(
+        workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Sales monitor",
-            status=AutomationStatus.ACTIVE,
-            trigger_type="schedule",
-            trigger_config={"cron": "* * * * *"},
+            status=AgenticTaskStatus.ACTIVE,
+            schedule_enabled=True,
+            schedule_config={"cron": "* * * * *"},
             instructions={"goal": "Find sales emails", "workflow_type": "monitor", "memory_shape": "email_monitor"},
             state={"workflow_memory": {"inspected_items": ["old-msg"]}},
         )
         run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            automation=workflow,
+            agentic_task=workflow,
             created_by=self.user,
             title="Sales monitor",
             source=AgentRunSource.SCHEDULE,

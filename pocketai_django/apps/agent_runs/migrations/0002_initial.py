@@ -11,14 +11,14 @@ class Migration(migrations.Migration):
     dependencies = [
         ('accounts', '0001_initial'),
         ('agent_runs', '0001_initial'),
-        ('automations', '0001_initial'),
+        ('agentic_tasks', '0001_initial'),
     ]
 
     operations = [
         migrations.AddField(
             model_name='agentrun',
-            name='automation',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='runs', to='automations.automation'),
+            name='agentic_task',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='runs', to='agentic_tasks.agentictask'),
         ),
         migrations.AddField(
             model_name='agentrun',

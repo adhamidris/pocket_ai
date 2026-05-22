@@ -194,5 +194,5 @@ class PhoneCallApprovalBehaviorTests(TestCase):
         self.assertEqual(len(phone_trace), 2)
         statuses = {str(entry.get("status") or "").strip().lower() for entry in phone_trace}
         self.assertIn("ok", statuses)
-        self.assertIn("blocked", statuses)
-        self.assertTrue(any(entry.get("error_code") == "duplicate_phone_call" for entry in phone_trace))
+        self.assertTrue(any(entry.get("origin") == "deduped" for entry in phone_trace))
+        self.assertTrue(any("deduped" in (entry.get("result_keys") or []) for entry in phone_trace))

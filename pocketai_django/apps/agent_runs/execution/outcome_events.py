@@ -99,6 +99,8 @@ class AgentRunOutcomeEventMixin:
         now,
     ) -> None:
         followup_meta = next_metadata if isinstance(next_metadata, Mapping) else {}
+        if getattr(run, "agentic_task_id", None):
+            return
         delegate_intent = str(followup_meta.get("delegate_intent") or "").strip().lower()
         followup_requested = bool(followup_meta.get("followup_requested") or delegate_intent == "explicit")
         followup_mode = str(followup_meta.get("followup_mode") or "").strip().lower() or "handoff"
@@ -229,15 +231,15 @@ class AgentRunOutcomeEventMixin:
             return (
                 "This task needs your approval to continue."
                 + (f" Tool: {tool_label}." if tool_label else "")
-                + " Please approve/deny from the Activity panel."
+                + " Please approve or deny from the sub-agent card."
             )
 
         raw_questions = pause_payload.get("questions")
         questions = [str(q).strip() for q in raw_questions if str(q or "").strip()] if isinstance(raw_questions, list) else []
         if questions:
             bullets = "\n".join([f"- {q}" for q in questions[:6]])
-            return "I need a bit more info to continue:\n" f"{bullets}\n\n" "Please reply from the Activity panel."
-        return "I need a bit more info to continue. Please reply from the Activity panel."
+            return "I need a bit more info to continue:\n" f"{bullets}\n\n" "Please reply from the sub-agent card."
+        return "I need a bit more info to continue. Please reply from the sub-agent card."
 
     def _post_pause_followup(
         self,
@@ -254,6 +256,8 @@ class AgentRunOutcomeEventMixin:
         now,
     ) -> None:
         followup_meta = next_metadata if isinstance(next_metadata, Mapping) else {}
+        if getattr(run, "agentic_task_id", None):
+            return
         delegate_intent = str(followup_meta.get("delegate_intent") or "").strip().lower()
         followup_requested = bool(followup_meta.get("followup_requested") or delegate_intent == "explicit")
         tool_name_value = str(pause_payload.get("tool_name") or "").strip().lower()

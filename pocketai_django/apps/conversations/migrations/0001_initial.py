@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('accounts', '0001_initial'),
-        ('automations', '0001_initial'),
+        ('agentic_tasks', '0001_initial'),
         ('crm', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
@@ -215,7 +215,7 @@ class Migration(migrations.Migration):
             name='MemoryItem',
             fields=[
                 ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('scope', models.CharField(choices=[('workspace', 'Workspace'), ('agent', 'Agent'), ('automation', 'Automation'), ('run', 'Run'), ('conversation', 'Conversation'), ('crm_contact', 'CRM contact'), ('crm_company', 'CRM company')], db_index=True, default='workspace', max_length=32)),
+                ('scope', models.CharField(choices=[('workspace', 'Workspace'), ('agent', 'Agent'), ('agentic_task', 'Agentic Task'), ('run', 'Run'), ('conversation', 'Conversation'), ('crm_contact', 'CRM contact'), ('crm_company', 'CRM company')], db_index=True, default='workspace', max_length=32)),
                 ('kind', models.CharField(choices=[('fact', 'Fact'), ('preference', 'Preference'), ('policy', 'Policy'), ('decision', 'Decision'), ('instruction', 'Instruction'), ('relationship', 'Relationship'), ('state_note', 'State note'), ('artifact_ref', 'Artifact reference'), ('extracted_data', 'Extracted data')], db_index=True, default='fact', max_length=32)),
                 ('key', models.CharField(blank=True, db_index=True, default='', max_length=160)),
                 ('content', models.TextField(blank=True, default='')),
@@ -231,7 +231,7 @@ class Migration(migrations.Migration):
                 ('created_at', models.DateTimeField(auto_now_add=True, db_index=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('agent_profile', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='memory_items', to='accounts.agentprofile')),
-                ('automation', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='memory_items', to='automations.automation')),
+                ('agentic_task', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='memory_items', to='agentic_tasks.agentictask')),
                 ('business_profile', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='memory_items', to='accounts.businessprofile')),
                 ('conversation', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='memory_items', to='conversations.conversation')),
                 ('created_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='created_memory_items', to=settings.AUTH_USER_MODEL)),
@@ -438,7 +438,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='memoryitem',
-            index=models.Index(fields=['automation', 'status', 'updated_at'], name='mem_auto_status_time_idx'),
+            index=models.Index(fields=['agentic_task', 'status', 'updated_at'], name='mem_task_status_time_idx'),
         ),
         migrations.AddIndex(
             model_name='memoryitem',

@@ -243,7 +243,7 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
             except Exception:  # pragma: no cover - best effort only
                 logger.exception("portal_tool_preference_save_failed approval=%s", approval.id)
 
-    # If this approval unblocks a background AgentRun (Activity panel), resume/cancel it.
+    # If this approval unblocks a sub-agent run, resume/cancel it.
     if approval:
         actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
         if actor_user:
@@ -281,7 +281,7 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                     business_profile=run.business_profile,
                     scope=MemoryScope.RUN,
                     agent_profile=run.agent_profile,
-                    automation=run.automation,
+                    agentic_task=run.agentic_task,
                     run=run,
                     conversation=run.conversation,
                     kind=MemoryKind.DECISION,
@@ -296,12 +296,12 @@ def portal_tool_approval(request: HttpRequest) -> JsonResponse:
                     },
                     created_by=actor_user,
                 )
-                if run.automation_id:
+                if run.agentic_task_id:
                     MemoryItem.objects.create(
                         business_profile=run.business_profile,
-                        scope=MemoryScope.AUTOMATION,
+                        scope=MemoryScope.TASK,
                         agent_profile=run.agent_profile,
-                        automation=run.automation,
+                        agentic_task=run.agentic_task,
                         run=run,
                         conversation=run.conversation,
                         kind=MemoryKind.DECISION,

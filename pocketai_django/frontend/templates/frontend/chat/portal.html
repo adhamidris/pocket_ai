@@ -302,6 +302,85 @@
     border-color: transparent;
   }
 
+  [data-chat-portal] .portal-task-approval__edit {
+    margin-top: 12px;
+    display: grid;
+    gap: 8px;
+  }
+
+  [data-chat-portal] .portal-task-approval__edit[hidden],
+  [data-chat-portal] .portal-call-approval__kv[hidden],
+  [data-chat-portal] [data-task-approval-edit-actions][hidden],
+  [data-chat-portal] .portal-task-approval__primary-actions[hidden] {
+    display: none !important;
+  }
+
+  [data-chat-portal] .portal-call-approval[data-agentic-task-approval="true"] {
+    max-width: 46rem;
+  }
+
+  [data-chat-portal] .portal-call-approval[data-agentic-task-approval="true"] .portal-call-approval__row {
+    align-items: flex-start;
+  }
+
+  [data-chat-portal] .portal-call-approval[data-agentic-task-approval="true"] .portal-call-approval__left {
+    align-items: flex-start;
+  }
+
+  [data-chat-portal] .portal-call-approval[data-agentic-task-approval="true"] .portal-call-approval__right {
+    align-items: flex-start;
+    padding-top: 0.05rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  [data-chat-portal] .portal-call-approval[data-agentic-task-approval="true"] .portal-call-approval__title,
+  [data-chat-portal] .portal-call-approval[data-agentic-task-approval="true"] .portal-call-approval__subtitle {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  [data-chat-portal] .portal-task-approval__primary-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  [data-chat-portal] .portal-task-approval__primary-actions .portal-call-approval__btn {
+    min-width: 4.2rem;
+    height: 1.9rem;
+    padding: 0 0.65rem;
+    font-size: 0.75rem;
+  }
+
+  [data-chat-portal] [data-task-approval-edit-actions] .portal-call-approval__btn {
+    min-width: 4.6rem;
+  }
+
+  [data-chat-portal] .portal-task-approval__edit-actions {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  [data-chat-portal] .portal-task-approval__input,
+  [data-chat-portal] .portal-task-approval__textarea {
+    width: 100%;
+    border: 1px solid rgba(148, 163, 184, 0.34);
+    border-radius: 9px;
+    padding: 8px 10px;
+    font-size: 13px;
+    background: white;
+    color: rgb(15, 23, 42);
+  }
+
+  [data-chat-portal] .portal-task-approval__textarea {
+    min-height: 92px;
+    resize: vertical;
+  }
+
   [data-chat-portal] .portal-agent-run[data-agent-run-variant="danger"] .portal-agent-run__summary {
     background: transparent;
     border-color: transparent;
@@ -938,7 +1017,7 @@
     position: relative;
   }
 
-  /* Left rail (match tool calls + background runs). */
+  /* Left rail (match tool calls + sub-agent runs). */
   [data-chat-portal] .portal-call-approval::after {
     content: "";
     position: absolute;
@@ -3006,6 +3085,203 @@
     line-height: 1.45;
   }
 
+  [data-chat-portal] .portal-task-thread {
+    min-height: calc(100vh - 8.5rem);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid hsl(var(--border) / 0.72);
+    border-radius: 8px;
+    background: hsl(var(--background) / 0.92);
+    overflow: hidden;
+  }
+
+  [data-chat-portal] .portal-task-thread__header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.72rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.58);
+    background: hsl(var(--background) / 0.9);
+  }
+
+  [data-chat-portal] .portal-task-thread__back {
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--border) / 0.72);
+    border-radius: 8px;
+    background: hsl(var(--muted) / 0.18);
+    color: hsl(var(--foreground));
+    transform: rotate(180deg);
+  }
+
+  [data-chat-portal] .portal-task-thread__title-wrap {
+    min-width: 0;
+  }
+
+  [data-chat-portal] .portal-task-thread__title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: hsl(var(--foreground));
+    overflow-wrap: anywhere;
+  }
+
+  [data-chat-portal] .portal-task-thread__subtitle,
+  [data-chat-portal] .portal-task-thread__hint {
+    font-size: 0.74rem;
+    line-height: 1.35;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-chat-portal] .portal-task-thread__scroll {
+    flex: 1;
+    min-height: 0;
+    padding: 0.8rem;
+    overflow-y: auto;
+  }
+
+  [data-chat-portal] .portal-task-thread__messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.72rem;
+    margin-bottom: 0.85rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__message {
+    display: flex;
+    flex-direction: column;
+    gap: 0.22rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__message[data-sender="user"] {
+    align-items: flex-end;
+  }
+
+  [data-chat-portal] .portal-task-thread__message-label {
+    font-size: 0.68rem;
+    font-weight: 650;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-chat-portal] .portal-task-thread__bubble {
+    max-width: 100%;
+    padding: 0.62rem 0.72rem;
+    border: 1px solid hsl(var(--border) / 0.58);
+    border-radius: 8px;
+    background: hsl(var(--muted) / 0.12);
+    font-size: 0.84rem;
+    line-height: 1.55;
+    color: hsl(var(--foreground));
+    overflow-wrap: anywhere;
+  }
+
+  [data-chat-portal] .portal-task-thread__message[data-sender="user"] .portal-task-thread__bubble {
+    background: hsl(var(--primary) / 0.1);
+    border-color: hsl(var(--primary) / 0.24);
+  }
+
+  [data-chat-portal] .portal-task-thread__message[data-sender="system"] .portal-task-thread__bubble {
+    color: hsl(var(--muted-foreground));
+    font-size: 0.78rem;
+    background: transparent;
+  }
+
+  [data-chat-portal] .portal-task-thread__bubble--live {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__agent-text p {
+    margin: 0 0 0.55rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__agent-text p:last-child {
+    margin-bottom: 0;
+  }
+
+  [data-chat-portal] .portal-task-thread__history {
+    margin-top: 0.9rem;
+    border-top: 1px solid hsl(var(--border) / 0.5);
+    padding-top: 0.72rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__history > summary {
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    font-size: 0.72rem;
+    font-weight: 750;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-chat-portal] .portal-task-thread__history > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  [data-chat-portal] .portal-task-thread__empty {
+    padding: 0.72rem;
+    border: 1px dashed hsl(var(--border) / 0.65);
+    border-radius: 8px;
+    color: hsl(var(--muted-foreground));
+    font-size: 0.82rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__composer {
+    padding: 0.72rem;
+    border-top: 1px solid hsl(var(--border) / 0.58);
+    background: hsl(var(--background) / 0.96);
+  }
+
+  [data-chat-portal] .portal-task-thread__input {
+    width: 100%;
+    min-height: 5.25rem;
+    max-height: 12rem;
+    resize: vertical;
+    border: 1px solid hsl(var(--border) / 0.78);
+    border-radius: 8px;
+    padding: 0.68rem 0.74rem;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+
+  [data-chat-portal] .portal-task-thread__input:focus {
+    outline: 2px solid hsl(var(--primary) / 0.28);
+    border-color: hsl(var(--primary) / 0.58);
+  }
+
+  [data-chat-portal] .portal-task-thread__composer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    margin-top: 0.55rem;
+  }
+
+  [data-chat-portal] .portal-task-thread__send {
+    height: 2rem;
+    min-width: 4.5rem;
+    border: 1px solid hsl(var(--primary) / 0.45);
+    border-radius: 999px;
+    background: hsl(var(--primary));
+    color: white;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  [data-chat-portal] .portal-task-thread__send:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Inbox Panel (Agent Requests) */
 
@@ -4435,7 +4711,8 @@
 	  data-endpoint-run-approval="{{ portal.endpoints.run_approval }}"
 	  data-endpoint-run-user-input="{{ portal.endpoints.run_user_input }}"
 	  data-endpoint-run-checkpoint="{{ portal.endpoints.run_checkpoint }}"
-	  data-endpoint-automation-run="{{ portal.endpoints.automation_run }}"
+	  data-endpoint-agentic-task-approval="{{ portal.endpoints.agentic_task_approval }}"
+	  data-endpoint-agentic-task-run="{{ portal.endpoints.agentic_task_run }}"
 	  data-endpoint-agent-request-update="{{ portal.endpoints.agent_request_update }}"
 	  data-endpoint-email-send-draft="{{ portal.endpoints.email_send_draft }}"
 	  data-endpoint-email-discard-draft="{{ portal.endpoints.email_discard_draft }}"
@@ -4522,13 +4799,7 @@
       
       <!-- Session list container -->
       <div class="hidden" data-sessions-list>
-        <button type="button" class="w-full flex items-center gap-1.5 px-3 py-2 text-[11px] font-medium text-muted-foreground/70 hover:text-muted-foreground transition-colors" data-recents-toggle>
-          <svg class="h-3 w-3 transition-transform duration-200" data-recents-chevron viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9"></polyline>
-          </svg>
-          <span class="uppercase tracking-wide">Recents</span>
-        </button>
-        <div class="px-3 pb-3 space-y-0.5 custom-scrollbar" data-sessions-items>
+        <div class="px-3 py-2 space-y-0.5 custom-scrollbar" data-sessions-items>
           <!-- Session items will be injected here by JavaScript -->
         </div>
       </div>
@@ -4774,9 +5045,9 @@
     </div>
   </main>
 
-  <!-- Activity Panel (Agent Runs) -->
+  <!-- Agentic Task Panel -->
   <aside hidden data-tasks-panel data-panel-state="open">
-    <button type="button" class="portal-tasks-open-btn" data-tasks-open-btn aria-label="Open activity">
+    <button type="button" class="portal-tasks-open-btn" data-tasks-open-btn aria-label="Open Agentic Tasks">
       <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <line x1="8" y1="6" x2="21" y2="6"></line>
         <line x1="8" y1="12" x2="21" y2="12"></line>
@@ -4799,9 +5070,9 @@
             </g>
           </svg>
         </span>
-        <span>Activity</span>
+        <span>Agentic Tasks</span>
       </div>
-      <button type="button" class="portal-tasks-close-btn" data-tasks-close-btn aria-label="Collapse activity">
+      <button type="button" class="portal-tasks-close-btn" data-tasks-close-btn aria-label="Collapse Agentic Tasks">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 6L6 18"></path>
           <path d="M6 6l12 12"></path>
@@ -4810,7 +5081,7 @@
     </div>
     <div class="portal-tasks-body custom-scrollbar" data-tasks-list>
       <div class="portal-tasks-empty" data-tasks-empty>
-        Background activity will appear here while you keep chatting.
+        Agentic Tasks will appear here.
       </div>
       <div data-tasks-cards></div>
     </div>

@@ -22,12 +22,12 @@ from apps.agent_runs.models import (
 )
 from apps.api.portal_chat.activity_snapshots import (
     _append_agent_run_event,
-    _create_portal_manual_automation_run,
-    _is_runnable_automation,
+    _create_portal_manual_agentic_task_run,
+    _is_runnable_agentic_task,
     _serialize_agent_request_for_portal,
     _serialize_agent_run_checkpoint_for_portal,
     _serialize_agent_run_for_portal,
-    _serialize_automation_for_portal,
+    _serialize_agentic_task_for_portal,
 )
 from apps.api.portal_chat.request_context import (
     _json_error,
@@ -39,7 +39,9 @@ from apps.api.portal_chat.serializers import (
     _apply_portal_tool_approval_state,
     _session_to_dict,
 )
-from apps.automations.models import Automation
+from apps.agentic_tasks.models import AgenticTask, AgenticTaskStatus
+from apps.agentic_tasks.processing import ensure_task_conversation
+from apps.agentic_tasks.scheduling import CronScheduleError, compute_next_agentic_task_schedule_at
 from apps.conversations.models import (
     AgentRequest,
     AgentRequestStatus,
@@ -63,6 +65,110 @@ from core.tenancy import tenant_context
 
 
 logger = logging.getLogger(__name__)
+
+
+def _patch_agentic_task_approval_blocks(
+    *,
+    conversation: Conversation,
+    message_id: str,
+    block_id: str,
+    agentic_task_id: str,
+    status: str,
+    agentic_task_payload: dict[str, object] | None = None,
+) -> None:
+    qs = ConversationMessage.objects.filter(conversation=conversation, sender=ConversationSender.AI)
+    if message_id:
+        qs = qs.filter(id=message_id)
+    else:
+        qs = qs.order_by("-created_at")[:8]
+    for message in list(qs):
+        blocks = message.content_blocks if isinstance(getattr(message, "content_blocks", None), list) else []
+        changed = False
+        updated_blocks: list[dict[str, object]] = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                updated_blocks.append(block)
+                continue
+            block_type = str(block.get("type") or "").strip().lower()
+            current_block_id = str(block.get("block_id") or block.get("blockId") or "").strip()
+            payload = block.get("payload") if isinstance(block.get("payload"), dict) else {}
+            current_task_id = str(
+                payload.get("agenticTaskId")
+                or payload.get("agentic_task_id")
+                or (payload.get("agenticTask") if isinstance(payload.get("agenticTask"), dict) else {}).get("id")
+                or ""
+            ).strip()
+            if block_type == "agentic_task_approval" and current_task_id == agentic_task_id and (not block_id or current_block_id == block_id):
+                next_payload = dict(payload)
+                next_payload["status"] = status
+                if agentic_task_payload:
+                    next_payload["agenticTask"] = dict(agentic_task_payload)
+                next_block = dict(block)
+                next_block["payload"] = next_payload
+                updated_blocks.append(next_block)
+                changed = True
+                continue
+            if block_type in {"tool_use", "tool_result"}:
+                next_payload = dict(payload)
+                patched_payload = False
+                for output_key in ("output_preview", "outputPreview", "output"):
+                    output = next_payload.get(output_key)
+                    if not isinstance(output, dict):
+                        continue
+                    task_payload = output.get("agentic_task") if isinstance(output.get("agentic_task"), dict) else output.get("agenticTask")
+                    if not isinstance(task_payload, dict):
+                        continue
+                    if str(task_payload.get("id") or "").strip() != agentic_task_id:
+                        continue
+                    next_output = dict(output)
+                    next_output["approval_status"] = status
+                    next_output["approvalStatus"] = status
+                    if agentic_task_payload:
+                        next_output["agentic_task"] = dict(agentic_task_payload)
+                        next_output["agenticTask"] = dict(agentic_task_payload)
+                    next_payload[output_key] = next_output
+                    patched_payload = True
+                if patched_payload and (not block_id or current_block_id == block_id):
+                    next_block = dict(block)
+                    next_block["payload"] = next_payload
+                    updated_blocks.append(next_block)
+                    changed = True
+                    continue
+                if patched_payload and block_id and current_block_id != block_id:
+                    next_block = dict(block)
+                    next_block["payload"] = next_payload
+                    updated_blocks.append(next_block)
+                    changed = True
+                    continue
+            else:
+                updated_blocks.append(block)
+                continue
+            updated_blocks.append(block)
+        if changed:
+            message.content_blocks = updated_blocks
+            message.save(update_fields=["content_blocks"])
+
+
+def _agentic_task_block_payload(agentic_task: AgenticTask) -> dict[str, object]:
+    instructions = agentic_task.instructions if isinstance(getattr(agentic_task, "instructions", None), dict) else {}
+    return {
+        "id": str(agentic_task.id),
+        "agentId": str(agentic_task.agent_profile_id),
+        "agentName": getattr(getattr(agentic_task, "agent_profile", None), "name", "") or "",
+        "name": agentic_task.name,
+        "description": agentic_task.description or "",
+        "status": agentic_task.status,
+        "visibility": agentic_task.visibility,
+        "scheduleEnabled": bool(agentic_task.schedule_enabled),
+        "scheduleConfig": agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {},
+        "goal": str(instructions.get("goal") or ""),
+        "instructions": dict(instructions),
+    }
+
+
+def _agentic_task_has_cron(agentic_task: AgenticTask) -> bool:
+    schedule_config = agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {}
+    return bool(str(schedule_config.get("cron") or "").strip())
 
 
 @require_POST
@@ -133,7 +239,7 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             business_profile=run.business_profile,
             scope=MemoryScope.RUN,
             agent_profile=run.agent_profile,
-            automation=run.automation,
+            agentic_task=run.agentic_task,
             run=run,
             conversation=run.conversation,
             kind=MemoryKind.STATE_NOTE,
@@ -143,12 +249,12 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
             visibility=MemoryVisibility.PRIVATE,
             created_by=actor_user,
         )
-        if run.automation_id:
+        if run.agentic_task_id:
             MemoryItem.objects.create(
                 business_profile=run.business_profile,
-                scope=MemoryScope.AUTOMATION,
+                scope=MemoryScope.TASK,
                 agent_profile=run.agent_profile,
-                automation=run.automation,
+                agentic_task=run.agentic_task,
                 run=run,
                 conversation=run.conversation,
                 kind=MemoryKind.STATE_NOTE,
@@ -214,20 +320,21 @@ def portal_agent_run_user_input(request: HttpRequest) -> JsonResponse:
 
 
 @require_POST
-def portal_automation_manual_run(request: HttpRequest) -> JsonResponse:
+def portal_agentic_task_manual_run(request: HttpRequest) -> JsonResponse:
     service = _service()
     try:
         payload = _parse_json_body(request)
     except PortalValidationError as exc:
         return _json_error("invalid_json", str(exc))
 
-    automation_id_raw = str(payload.get("automation_id") or payload.get("automationId") or "").strip()
-    if not automation_id_raw:
-        return _json_error("validation_error", "automation_id is required.")
+    agentic_task_id_raw = str(payload.get("agenticTaskId") or payload.get("agentic_task_id") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not agentic_task_id_raw:
+        return _json_error("validation_error", "agentic_task_id is required.")
     try:
-        automation_uuid = uuid.UUID(automation_id_raw)
+        agentic_task_uuid = uuid.UUID(agentic_task_id_raw)
     except (TypeError, ValueError):
-        return _json_error("validation_error", "automation_id is invalid.")
+        return _json_error("validation_error", "agentic_task_id is invalid.")
 
     try:
         conversation, session = _resolve_request_conversation(
@@ -252,29 +359,73 @@ def portal_automation_manual_run(request: HttpRequest) -> JsonResponse:
         return _json_error("validation_error", "The current portal session is not linked to an agent.")
 
     with tenant_context(business_id):
-        automation = (
-            Automation.objects.select_related("agent_profile", "business_profile", "created_by")
+        agentic_task = (
+            AgenticTask.objects.select_related("agent_profile", "business_profile", "created_by")
             .filter(
-                id=automation_uuid,
+                id=agentic_task_uuid,
                 business_profile_id=business_id,
                 agent_profile_id=agent_profile_id,
             )
             .first()
         )
-        if automation is None:
-            return _json_error("not_found", "Automation not found.", status=404)
-        if not _is_runnable_automation(automation):
-            return _json_error("validation_error", "Automation cannot be run.")
-        run = _create_portal_manual_automation_run(
-            automation=automation,
+        if agentic_task is None:
+            return _json_error("not_found", "Agentic Task not found.", status=404)
+        if not _is_runnable_agentic_task(agentic_task):
+            return _json_error("validation_error", "Agentic Task cannot be run.")
+        task_conversation = ensure_task_conversation(agentic_task)
+        if message:
+            service.append_message(
+                session_token=task_conversation.session_token,
+                sender=ConversationSender.CUSTOMER,
+                body=message,
+                metadata={"source": "agentic_task_panel", "agentic_task_id": str(agentic_task.id), "type": "user_message"},
+                conversation=task_conversation,
+            )
+        run = _create_portal_manual_agentic_task_run(
+            agentic_task=agentic_task,
             created_by=actor_user,
             portal_conversation=conversation,
         )
-        Automation.objects.filter(id=automation.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
-        automation.refresh_from_db()
+        if message:
+            _append_agent_run_event(
+                run,
+                stream=AgentRunEventStream.EXECUTED,
+                event_type=AgentRunEventType.PROGRESS,
+                label="User message received",
+                payload={"message": message, "agentic_task_id": str(agentic_task.id)},
+            )
+            if run.status in {AgentRunStatus.WAITING_USER, AgentRunStatus.PAUSED, AgentRunStatus.WAITING_EXTERNAL}:
+                MemoryItem.objects.create(
+                    business_profile=run.business_profile,
+                    scope=MemoryScope.TASK,
+                    agent_profile=run.agent_profile,
+                    agentic_task=run.agentic_task,
+                    run=run,
+                    conversation=task_conversation,
+                    kind=MemoryKind.STATE_NOTE,
+                    key="user_input",
+                    content=message[:4000],
+                    payload={"source": "agentic_task_panel", "source_run_id": str(run.id)},
+                    visibility=MemoryVisibility.SHARED,
+                    created_by=actor_user,
+                )
+                next_meta = dict(run.metadata or {}) if isinstance(run.metadata, dict) else {}
+                next_meta.pop("pending_user_input", None)
+                AgentRun.objects.filter(id=run.id).update(
+                    status=AgentRunStatus.QUEUED,
+                    run_after=timezone.now(),
+                    lease_expires_at=None,
+                    error_detail="",
+                    metadata=next_meta,
+                    updated_at=timezone.now(),
+                )
+                run.refresh_from_db()
+        AgenticTask.objects.filter(id=agentic_task.id).update(last_triggered_at=timezone.now(), updated_at=timezone.now())
+        agentic_task.refresh_from_db()
+        task_messages = list(task_conversation.messages.order_by("-sent_at", "-created_at")[:40])
         recent_runs = list(
-            AgentRun.objects.select_related("automation")
-            .filter(automation=automation, business_profile_id=business_id, agent_profile_id=agent_profile_id)
+            AgentRun.objects.select_related("agentic_task")
+            .filter(agentic_task=agentic_task, business_profile_id=business_id, agent_profile_id=agent_profile_id)
             .exclude(id=run.id)
             .order_by("-created_at")[:5]
         )
@@ -282,11 +433,161 @@ def portal_automation_manual_run(request: HttpRequest) -> JsonResponse:
     return JsonResponse(
         {
             "session": _session_to_dict(session),
-            "automation": _serialize_automation_for_portal(automation, latest_run=run, recent_runs=recent_runs),
+            "agenticTask": _serialize_agentic_task_for_portal(agentic_task, latest_run=run, recent_runs=recent_runs, messages=list(reversed(task_messages))),
             "run": _serialize_agent_run_for_portal(run),
         },
         status=201,
     )
+
+
+@require_POST
+def portal_agentic_task_approval(request: HttpRequest) -> JsonResponse:
+    service = _service()
+    try:
+        payload = _parse_json_body(request)
+    except PortalValidationError as exc:
+        return _json_error("invalid_json", str(exc))
+
+    agentic_task_id_raw = str(payload.get("agenticTaskId") or payload.get("agentic_task_id") or "").strip()
+    action = str(payload.get("action") or "").strip().lower()
+    message_id = str(payload.get("messageId") or payload.get("message_id") or "").strip()
+    block_id = str(payload.get("blockId") or payload.get("block_id") or "").strip()
+    if action not in {"approve", "reject", "edit"}:
+        return _json_error("validation_error", "Invalid Agentic Task approval action.")
+    try:
+        agentic_task_uuid = uuid.UUID(agentic_task_id_raw)
+    except (TypeError, ValueError):
+        return _json_error("validation_error", "agentic_task_id is invalid.")
+
+    try:
+        conversation, session = _resolve_request_conversation(
+            service=service,
+            request=request,
+            payload=payload,
+            include_messages=False,
+        )
+    except PortalNotFoundError as exc:
+        return _json_error("not_found", str(exc), status=404)
+    except PortalAuthorizationError as exc:
+        status = 401 if str(exc) == "Authentication is required." else 403
+        code = "auth_required" if status == 401 else "forbidden"
+        return _json_error(code, str(exc), status=status)
+    except PortalValidationError as exc:
+        return _json_error("validation_error", str(exc))
+
+    actor_user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
+    business_id = getattr(conversation, "business_profile_id", None)
+    agent_profile_id = getattr(conversation, "agent_profile_id", None)
+    with tenant_context(business_id):
+        agentic_task = (
+            AgenticTask.objects.select_related("agent_profile", "business_profile", "created_by")
+            .filter(
+                id=agentic_task_uuid,
+                business_profile_id=business_id,
+                agent_profile_id=agent_profile_id,
+                status=AgenticTaskStatus.DRAFT,
+            )
+            .first()
+        )
+        if agentic_task is None:
+            return _json_error("not_found", "Draft Agentic Task not found.", status=404)
+
+        edits = payload.get("edits") if isinstance(payload.get("edits"), dict) else {}
+        if action in {"approve", "edit"} and edits:
+            updates: list[str] = []
+            if "name" in edits:
+                name = str(edits.get("name") or "").strip()
+                if not name:
+                    return _json_error("validation_error", "Task name is required.")
+                agentic_task.name = name[:160]
+                updates.append("name")
+            if "goal" in edits:
+                goal = str(edits.get("goal") or "").strip()
+                if not goal:
+                    return _json_error("validation_error", "Task goal is required.")
+                instructions = dict(agentic_task.instructions or {}) if isinstance(agentic_task.instructions, dict) else {}
+                instructions["goal"] = goal[:6000]
+                agentic_task.instructions = instructions
+                updates.append("instructions")
+            if "scheduleEnabled" in edits or "schedule_enabled" in edits:
+                agentic_task.schedule_enabled = bool(edits.get("scheduleEnabled") if "scheduleEnabled" in edits else edits.get("schedule_enabled"))
+                updates.append("schedule_enabled")
+            if "scheduleConfig" in edits or "schedule_config" in edits:
+                schedule_config = edits.get("scheduleConfig") if "scheduleConfig" in edits else edits.get("schedule_config")
+                agentic_task.schedule_config = dict(schedule_config or {}) if isinstance(schedule_config, dict) else {}
+                updates.append("schedule_config")
+            if updates:
+                agentic_task.save(update_fields=sorted(set([*updates, "updated_at"])))
+
+        if action == "reject":
+            snapshot = _agentic_task_block_payload(agentic_task)
+            agentic_task.delete()
+            metadata = dict(conversation.metadata or {}) if isinstance(conversation.metadata, dict) else {}
+            if str(metadata.get("pending_agentic_task_activation_id") or "") == agentic_task_id_raw:
+                metadata.pop("pending_agentic_task_activation_id", None)
+                conversation.metadata = metadata
+                conversation.save(update_fields=["metadata", "last_activity_at"])
+            _patch_agentic_task_approval_blocks(
+                conversation=conversation,
+                message_id=message_id,
+                block_id=block_id,
+                agentic_task_id=agentic_task_id_raw,
+                status="rejected",
+                agentic_task_payload=snapshot,
+            )
+            return JsonResponse({"session": _session_to_dict(session), "status": "rejected", "agenticTask": snapshot}, status=200)
+
+        if action == "edit":
+            agentic_task.refresh_from_db()
+            snapshot = _agentic_task_block_payload(agentic_task)
+            _patch_agentic_task_approval_blocks(
+                conversation=conversation,
+                message_id=message_id,
+                block_id=block_id,
+                agentic_task_id=agentic_task_id_raw,
+                status="pending",
+                agentic_task_payload=snapshot,
+            )
+            return JsonResponse({"session": _session_to_dict(session), "status": "pending", "agenticTask": snapshot}, status=200)
+
+        next_trigger_at = None
+        if agentic_task.schedule_enabled and not _agentic_task_has_cron(agentic_task):
+            agentic_task.schedule_enabled = False
+            agentic_task.schedule_config = {}
+        if agentic_task.schedule_enabled:
+            try:
+                next_trigger_at = compute_next_agentic_task_schedule_at(
+                    "cron",
+                    dict(agentic_task.schedule_config or {}),
+                    after=timezone.now(),
+                )
+            except CronScheduleError as exc:
+                return _json_error("validation_error", str(exc))
+        ensure_task_conversation(agentic_task)
+        metadata = dict(agentic_task.metadata or {}) if isinstance(agentic_task.metadata, dict) else {}
+        metadata["activated_from_chat_approval"] = True
+        metadata["activated_by_user_id"] = str(getattr(actor_user, "id", "") or "") if actor_user else ""
+        agentic_task.status = AgenticTaskStatus.ACTIVE
+        agentic_task.next_trigger_at = next_trigger_at
+        agentic_task.metadata = metadata
+        agentic_task.save(update_fields=["status", "schedule_enabled", "schedule_config", "next_trigger_at", "metadata", "updated_at"])
+        metadata = dict(conversation.metadata or {}) if isinstance(conversation.metadata, dict) else {}
+        if str(metadata.get("pending_agentic_task_activation_id") or "") == agentic_task_id_raw:
+            metadata.pop("pending_agentic_task_activation_id", None)
+            conversation.metadata = metadata
+            conversation.save(update_fields=["metadata", "last_activity_at"])
+        agentic_task.refresh_from_db()
+        snapshot = _agentic_task_block_payload(agentic_task)
+        _patch_agentic_task_approval_blocks(
+            conversation=conversation,
+            message_id=message_id,
+            block_id=block_id,
+            agentic_task_id=agentic_task_id_raw,
+            status="approved",
+            agentic_task_payload=snapshot,
+        )
+
+    return JsonResponse({"session": _session_to_dict(session), "status": "approved", "agenticTask": snapshot}, status=200)
 
 
 @require_POST
@@ -330,9 +631,9 @@ def portal_agent_run_checkpoint_resolve(request: HttpRequest) -> JsonResponse:
     business_id = getattr(conversation, "business_profile_id", None)
     with tenant_context(business_id):
         checkpoint = (
-            AgentRunCheckpoint.objects.select_related("run", "automation")
+            AgentRunCheckpoint.objects.select_related("run", "agentic_task")
             .filter(id=checkpoint_uuid, business_profile_id=business_id)
-            .filter(Q(run__agent_profile_id=conversation.agent_profile_id) | Q(automation__agent_profile_id=conversation.agent_profile_id))
+            .filter(Q(run__agent_profile_id=conversation.agent_profile_id) | Q(agentic_task__agent_profile_id=conversation.agent_profile_id))
             .first()
         )
         if checkpoint is None:
@@ -361,7 +662,7 @@ def portal_agent_run_checkpoint_resolve(request: HttpRequest) -> JsonResponse:
             business_profile=run.business_profile,
             scope=MemoryScope.RUN,
             agent_profile=run.agent_profile,
-            automation=run.automation,
+            agentic_task=run.agentic_task,
             run=run,
             conversation=run.conversation,
             kind=MemoryKind.DECISION if checkpoint.kind == AgentRunCheckpointKind.APPROVAL else MemoryKind.STATE_NOTE,
@@ -541,7 +842,7 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
                 business_profile=run.business_profile,
                 scope=MemoryScope.RUN,
                 agent_profile=run.agent_profile,
-                automation=run.automation,
+                agentic_task=run.agentic_task,
                 run=run,
                 conversation=run.conversation,
                 kind=MemoryKind.DECISION,
@@ -556,12 +857,12 @@ def portal_agent_run_approval(request: HttpRequest) -> JsonResponse:
                 },
                 created_by=actor_user,
             )
-            if run.automation_id:
+            if run.agentic_task_id:
                 MemoryItem.objects.create(
                     business_profile=run.business_profile,
-                    scope=MemoryScope.AUTOMATION,
+                    scope=MemoryScope.TASK,
                     agent_profile=run.agent_profile,
-                    automation=run.automation,
+                    agentic_task=run.agentic_task,
                     run=run,
                     conversation=run.conversation,
                     kind=MemoryKind.DECISION,
@@ -766,7 +1067,7 @@ def portal_agent_request_update(request: HttpRequest) -> JsonResponse:
                         business_profile=run.business_profile,
                         scope=MemoryScope.RUN,
                         agent_profile=run.agent_profile,
-                        automation=run.automation,
+                        agentic_task=run.agentic_task,
                         run=run,
                         conversation=run.conversation,
                         kind=MemoryKind.STATE_NOTE,

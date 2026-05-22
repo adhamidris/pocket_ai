@@ -79,7 +79,7 @@ class AgentRunAuditSanitizationTests(SimpleTestCase):
             "output": {
                 "tool": "list_tasks",
                 "status": "ok",
-                "tasks": [
+                "agentic_tasks": [
                     {
                         "id": "task_1",
                         "agent_id": "agent_1",
@@ -87,9 +87,7 @@ class AgentRunAuditSanitizationTests(SimpleTestCase):
                         "description": "sales " * 500,
                         "status": "paused",
                         "visibility": "initiator",
-                        "trigger_type": "schedule",
-                        "trigger_config": {"cron": "0 * * * *", "type": "cron", "timezone": "Africa/Cairo"},
-                        "source_config": {"secret": "do-not-show"},
+                        "schedule_config": {"cron": "0 * * * *", "type": "cron", "timezone": "Africa/Cairo"},
                         "instructions": {"goal": "Monitor the inbox and report to adham@example.com"},
                         "last_triggered_at": "2026-05-17T03:13:40.709151+00:00",
                     }
@@ -103,9 +101,9 @@ class AgentRunAuditSanitizationTests(SimpleTestCase):
         self.assertEqual(sanitized["input"], {"status": "all", "limit": 20})
         self.assertEqual(sanitized["output"]["tasks_count"], 1)
         self.assertEqual(sanitized["output"]["tasks"][0]["name"], "Sales Email Monitor & Report")
-        self.assertEqual(sanitized["output"]["tasks"][0]["trigger_config"]["timezone"], "Africa/Cairo")
+        self.assertEqual(sanitized["output"]["tasks"][0]["schedule_config"]["timezone"], "Africa/Cairo")
         self.assertNotIn("description", sanitized["output"]["tasks"][0])
-        self.assertNotIn("source_config", dump)
+        self.assertNotIn("trigger_type", dump)
         self.assertNotIn("adham@example.com", dump)
 
     def test_sanitize_tool_event_drops_prompt_view(self) -> None:

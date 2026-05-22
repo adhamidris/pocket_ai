@@ -16,7 +16,7 @@ Directory Map
   Extracted portal chat helpers used by the legacy chat_portal.py entrypoint.
   - debug_tools.py: portal tool/debug payload serialization.
   - planning.py: low-intent and planner-decision helpers.
-  - activity_snapshots.py: agent run, automation, and agent request portal snapshots.
+  - activity_snapshots.py: agent run, Agentic Task, and agent request portal snapshots.
   - serializers.py: portal session, message, turn, approval, and block serializers.
   - tracing.py: portal structured trace logger.
   - request_context.py: portal request parsing, auth resolution, JSON errors, and UI language metadata.
@@ -25,7 +25,7 @@ Directory Map
   - status_events.py: portal status event queue helpers.
   - session_endpoints.py: portal handle, session bootstrap, messages, CSAT, and feedback endpoints.
   - tool_approvals.py: portal MCP tool approval endpoint.
-  - activity_actions.py: portal agent-run, automation, checkpoint, approval, and request action endpoints.
+  - activity_actions.py: portal agent-run, Agentic Task, checkpoint, approval, and request action endpoints.
   - tool_history.py: portal tool approval and tool event history endpoint.
   - email_endpoints.py: portal email draft send/discard endpoints.
   - files.py: portal upload, signed download, and fresh download URL endpoints.
@@ -38,9 +38,9 @@ Directory Map
 - agents/
   Agent dashboard endpoints used by the legacy views.py entrypoint.
   - endpoints.py: agent list/detail, capability graph, directory, and knowledge access endpoints.
-  - run_shared.py: shared serializers, request helpers, and run/automation helper operations.
+  - run_shared.py: shared serializers, request helpers, and run/Agentic Task helper operations.
   - runs.py: agent run list/detail/events/actions and checkpoint resolution endpoints.
-  - automations.py: automation CRUD, manual run, and webhook trigger endpoints.
+  - agentic_tasks.py: Agentic Task CRUD and manual run endpoints.
   - custom_assistants.py: custom assistant CRUD and session endpoints.
   - memory.py: curated memory review/list/detail endpoints.
 - knowledge_documents/

@@ -28,7 +28,7 @@ class WorkflowInstructions(TypedDict, total=False):
     """
     Serializable instruction contract for a background run.
 
-    Stored on `Automation.instructions` and snapshot into `AgentRun.run_snapshot`.
+    Stored on `AgenticTask.instructions` and snapshot into `AgentRun.run_snapshot`.
     """
 
     version: int
@@ -166,12 +166,12 @@ def _normalize_slug(value: object) -> str:
     return text[:64]
 
 
-def infer_workflow_type_and_memory_shape(*, goal: object = "", trigger_type: object = "", source_config: object = None) -> tuple[str, str]:
+def infer_workflow_type_and_memory_shape(*, goal: object = "", schedule_type: object = "", source_context: object = None) -> tuple[str, str]:
     text = " ".join(
         [
             str(goal or ""),
-            str(trigger_type or ""),
-            json.dumps(source_config, ensure_ascii=False, sort_keys=True) if isinstance(source_config, Mapping) else "",
+            str(schedule_type or ""),
+            json.dumps(source_context, ensure_ascii=False, sort_keys=True) if isinstance(source_context, Mapping) else "",
         ]
     ).lower()
     if any(token in text for token in ("email", "inbox", "gmail", "outlook", "message", "lead", "sales")):

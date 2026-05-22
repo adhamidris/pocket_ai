@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.agent_runs.models import AgentRun
-from apps.automations.models import Automation
+from apps.agentic_tasks.models import AgenticTask
 from apps.conversations.memory_extraction import MemoryExtractionService
 from apps.conversations.models import MemoryItem
 
@@ -25,7 +25,7 @@ class MemoryExtractionServiceTests(TestCase):
             status="active",
         )
         self.agent = AgentProfile.objects.create(business_profile=self.business, user=self.user, name="Ops Agent")
-        self.workflow = Automation.objects.create(
+        self.workflow = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
@@ -35,7 +35,7 @@ class MemoryExtractionServiceTests(TestCase):
         self.run = AgentRun.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
-            automation=self.workflow,
+            agentic_task=self.workflow,
             created_by=self.user,
             title="Email Checker",
             run_snapshot={"name": self.workflow.name},

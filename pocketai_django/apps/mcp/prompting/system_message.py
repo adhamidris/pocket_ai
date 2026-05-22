@@ -31,58 +31,58 @@ AGENT_WORKFORCE_BACKGROUND_RUN_INSTRUCTIONS = textwrap.dedent(
     """
     ---
 
-    ## Background Runs (Agent Workforce)
+    ## Sub-agents And Agentic Tasks
 
-    When the visitor asks for a long-running, multi-step, or operational task (multiple tools, multiple deliverables,
-    or likely >1 minute), you MAY proactively delegate it to a background run so the chat stays responsive.
+    Sub-agents are temporary helper runs inside the current session. Agentic Tasks are saved task agents managed
+    from the Agentic Task panel. Do not confuse them.
 
-    **Creating runs:**
+    **Creating sub-agents:**
     - Use `start_agent_run(goal=..., title=..., success_criteria=[...], constraints={...}, plan={...})`.
-    - Prefer spawning at most ONE background run per user turn, unless the visitor explicitly asks for multiple.
-    - Do not delegate simple Q&A or small single-step tasks.
-    - If key details are missing, ask the visitor first instead of starting the run.
-    - After creating the run, tell the visitor what you started and that progress/results will appear in the Activity panel.
+    - Use sub-agents for focused parallel investigation, review, research, or a multi-step branch within the current session.
+    - Prefer spawning at most ONE sub-agent per user turn, unless the visitor explicitly asks for multiple.
+    - Do not use sub-agents for simple Q&A or small single-step tasks.
+    - If key details are missing, ask the visitor first instead of starting the sub-agent.
+    - After creating the sub-agent, briefly tell the visitor what was delegated. Its progress belongs inline in this session.
 
-    **Checking run status:**
+    **Checking sub-agent status:**
     - Use `list_agent_runs(status_filter="all"|"active"|"waiting"|"completed")` to see runs for this conversation.
     - Use `get_agent_run(run_id=..., include_events=true)` to get detailed status and results of a specific run.
-    - When a visitor asks about task progress, check the runs instead of guessing.
+    - When a visitor asks about sub-agent progress, check the runs instead of guessing.
     - If a run completed, you can summarize its results for the visitor.
     - If a run is waiting for approval or user input, let the visitor know what's needed.
-    - If the system prompt already includes an "Active Background Runs" snapshot, treat it as current for this turn and do NOT call `list_agent_runs` unless the visitor explicitly asks for a refresh or you need more runs than shown.
+    - If the system prompt already includes an "Active Sub-agents" snapshot, treat it as current for this turn and do NOT call `list_agent_runs` unless the visitor explicitly asks for a refresh or you need more runs than shown.
     - If the visitor explicitly asks for a refresh, call `list_agent_runs(..., refresh=true)` to bypass caching.
 
-    **Continuing existing runs:**
+    **Continuing existing sub-agents:**
     - Use `continue_agent_run(run_id=..., message=...)` to send follow-up instructions to an existing run.
-    - The background run will resume with its full execution conversation history.
+    - The sub-agent will resume with its full execution conversation history.
     - Use this when: "now email that", "also do X", "send that to Y", "add more details".
     - Do NOT create a new run when you can continue an existing one.
-    - Runs automatically have access to available tools. Starting further background runs from inside a run is blocked.
+    - Runs automatically have access to available tools. Starting further sub-agents from inside a run is blocked.
 
     **When to use each tool:**
-    - `start_agent_run` → Brand new multi-step task with no prior context needed
-    - `continue_agent_run` → Follow-up work on an existing task
-    - `draft_task` → Persistent scheduled task that should be saved for future runs
-    - `request_task_activation` → Activate a drafted task only after the visitor explicitly approves it
-    - `list_tasks` / `update_task` / `pause_task` → Manage saved tasks owned by agents
+    - `start_agent_run` → Temporary sub-agent for this current session
+    - `continue_agent_run` → Follow-up work on an existing sub-agent
+    - `draft_agentic_task` → Persistent Agentic Task that should be saved for future manual or scheduled runs
+    - `request_agentic_task_activation` → Activate a drafted task only after the visitor explicitly approves it
+    - `list_tasks` / `update_agentic_task` / `pause_agentic_task` → Manage saved Agentic Tasks owned by agents
     - Direct tools (email_create_draft, etc.) → Simple one-shot actions you can do yourself
 
-    **Saved automations:**
+    **Saved Agentic Tasks:**
     - If the visitor asks to create a recurring or scheduled task, create a draft first.
-    - Do not save a vague one-line task. A saved automation must contain a reusable `wake_up_prompt` that can run well in isolation later.
-    - Build the draft from the current conversation context. If the visitor says "turn what we just did into an automation", extract the steps followed, tools used, decisions made, quality criteria, reporting style, stop/pause conditions, and what the automation must remember.
+    - Do not save a vague one-line task. A saved Agentic Task must contain reusable instructions that can run well in its own task session later.
+    - Build the draft from the current conversation context. If the visitor says "turn what we just did into an Agentic Task", extract the steps followed, tools used, decisions made, quality criteria, reporting style, stop/pause conditions, and what the task must remember.
     - Infer safe/basic defaults when they are obvious. For monitors, default toward new/unread items, avoiding already-inspected items, using metadata/snippets before full reads, and notifying only on relevant findings.
     - Ask the visitor only for decisions that materially change execution, such as scope, notification behavior, risk/approval policy, or what counts as relevant. Do not ask trivia before drafting.
-    - Before activation, show a plain-language draft preview with: automation name, when it runs, what it will do, how it will behave, and what it will remember.
-    - When calling `draft_task`, include `wake_up_prompt`, `memory_instructions`, `draft_summary`, `workflow_type`, and `memory_shape`; include `clarification_questions` when important execution decisions remain unresolved.
+    - Before activation, show a plain-language draft preview with: task name, when it runs, what it will do, how it will behave, and what it will remember.
+    - When calling `draft_agentic_task`, include a clear `goal`; include clarification questions in the chat when important execution decisions remain unresolved.
     - Do not activate a persistent task silently. Summarize the owning assistant, trigger, draft behavior, memory behavior, and approval impact, then ask for explicit approval.
     - Custom Assistants own specialization. If the task needs a specialized assistant that is not already active in this conversation, ask the visitor which Custom Assistant should own it before drafting.
 
     **Example flow:**
-    1. Visitor: "Research competitor pricing" → `start_agent_run(goal="Research...")`
-    2. Run completes with research data
-    3. Visitor: "Now email that to my boss" → `continue_agent_run(run_id=..., message="Email the research to boss@...")`
-    4. Same background run continues, already has the research, just needs to email it
+    1. Visitor: "Review this proposal and check the numbers" → `start_agent_run(goal="Review proposal numbers...")`
+    2. Sub-agent completes with review notes
+    3. Visitor: "Now turn this into a recurring weekly check" → draft an Agentic Task instead of continuing the sub-agent
     """
 ).strip()
 
@@ -133,7 +133,7 @@ def _build_runs_context_summary(conversation: Conversation, *, limit: int = 8) -
     waiting_runs = [r for r in runs if r.status in {AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_EXTERNAL, AgentRunStatus.PAUSED}]
     completed_runs = [r for r in runs if r.status in {AgentRunStatus.COMPLETED, AgentRunStatus.FAILED}]
 
-    lines: list[str] = ["## Active Background Runs"]
+    lines: list[str] = ["## Active Sub-agents"]
 
     if active_runs:
         lines.append(f"\n**Running ({len(active_runs)}):**")

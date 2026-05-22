@@ -14,7 +14,7 @@ class AgentRunVisibility(models.TextChoices):
 
 class AgentRunSource(models.TextChoices):
     CHAT = "chat", "Chat"
-    AUTOMATION = "automation", "Automation"
+    TASK = "task", "Task"
     SCHEDULE = "schedule", "Schedule"
     DELEGATION = "delegation", "Delegation"
     API = "api", "API"
@@ -45,7 +45,7 @@ class AgentRun(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="Optional anchor conversation for chat-originated or automation-associated runs.",
+        help_text="Optional anchor conversation for chat-originated or agentic_task-associated runs.",
     )
     execution_conversation = models.ForeignKey(
         "conversations.Conversation",
@@ -62,8 +62,8 @@ class AgentRun(models.Model):
         null=True,
         blank=True,
     )
-    automation = models.ForeignKey(
-        "automations.Automation",
+    agentic_task = models.ForeignKey(
+        "agentic_tasks.AgenticTask",
         related_name="runs",
         on_delete=models.SET_NULL,
         null=True,
@@ -105,7 +105,7 @@ class AgentRun(models.Model):
             models.Index(fields=["status", "lease_expires_at"], name="run_status_lease_idx"),
             models.Index(fields=["conversation", "created_at"], name="run_conv_created_idx"),
             models.Index(fields=["business_profile", "created_at"], name="run_biz_created_idx"),
-            models.Index(fields=["automation", "created_at"], name="run_automation_created_idx"),
+            models.Index(fields=["agentic_task", "created_at"], name="run_agentic_task_created_idx"),
             models.Index(fields=["parent_run", "created_at"], name="run_parent_created_idx"),
         ]
 
@@ -114,8 +114,8 @@ class AgentRun(models.Model):
             self.business_profile = self.agent_profile.business_profile
         if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):
             self.business_profile = self.conversation.business_profile
-        if self.automation_id and not self.business_profile_id and getattr(self, "automation", None):
-            self.business_profile = self.automation.business_profile
+        if self.agentic_task_id and not self.business_profile_id and getattr(self, "agentic_task", None):
+            self.business_profile = self.agentic_task.business_profile
         super().save(*args, **kwargs)
 
     def __str__(self) -> str:  # pragma: no cover
@@ -179,7 +179,7 @@ class AgentRunCheckpointStatus(models.TextChoices):
 class AgentRunCheckpoint(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     business_profile = models.ForeignKey("accounts.BusinessProfile", related_name="agent_run_checkpoints", on_delete=models.CASCADE)
-    automation = models.ForeignKey("automations.Automation", related_name="checkpoints", on_delete=models.SET_NULL, null=True, blank=True)
+    agentic_task = models.ForeignKey("agentic_tasks.AgenticTask", related_name="checkpoints", on_delete=models.SET_NULL, null=True, blank=True)
     run = models.ForeignKey(AgentRun, related_name="checkpoints", on_delete=models.CASCADE)
     conversation = models.ForeignKey("conversations.Conversation", related_name="agent_run_checkpoints", on_delete=models.SET_NULL, null=True, blank=True)
     child_run = models.ForeignKey(AgentRun, related_name="parent_checkpoints", on_delete=models.SET_NULL, null=True, blank=True)
@@ -201,7 +201,7 @@ class AgentRunCheckpoint(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=["business_profile", "status", "updated_at"], name="checkpoint_biz_status_idx"),
-            models.Index(fields=["automation", "status", "updated_at"], name="checkpoint_auto_status_idx"),
+            models.Index(fields=["agentic_task", "status", "updated_at"], name="checkpoint_task_status_idx"),
             models.Index(fields=["run", "status", "created_at"], name="checkpoint_run_status_idx"),
             models.Index(fields=["status", "expires_at"], name="checkpoint_expiry_idx"),
         ]
@@ -209,8 +209,8 @@ class AgentRunCheckpoint(models.Model):
     def save(self, *args, **kwargs):
         if self.run_id and not self.business_profile_id and getattr(self, "run", None):
             self.business_profile = self.run.business_profile
-        if self.run_id and not self.automation_id and getattr(self, "run", None):
-            self.automation = self.run.automation
+        if self.run_id and not self.agentic_task_id and getattr(self, "run", None):
+            self.agentic_task = self.run.agentic_task
         if self.run_id and not self.conversation_id and getattr(self, "run", None):
             self.conversation = self.run.conversation
         super().save(*args, **kwargs)
@@ -262,7 +262,7 @@ class AgentRunNotification(models.Model):
     business_profile = models.ForeignKey("accounts.BusinessProfile", related_name="agent_run_notifications", on_delete=models.CASCADE)
     agent_profile = models.ForeignKey("accounts.AgentProfile", related_name="agent_run_notifications", on_delete=models.SET_NULL, null=True, blank=True)
     owner_agent_profile = models.ForeignKey("accounts.AgentProfile", related_name="owned_run_notifications", on_delete=models.SET_NULL, null=True, blank=True)
-    automation = models.ForeignKey("automations.Automation", related_name="notifications", on_delete=models.SET_NULL, null=True, blank=True)
+    agentic_task = models.ForeignKey("agentic_tasks.AgenticTask", related_name="notifications", on_delete=models.SET_NULL, null=True, blank=True)
     run = models.ForeignKey(AgentRun, related_name="notifications", on_delete=models.CASCADE)
     target_conversation = models.ForeignKey(
         "conversations.Conversation",
@@ -287,7 +287,7 @@ class AgentRunNotification(models.Model):
         ordering = ("-created_at",)
         indexes = [
             models.Index(fields=["business_profile", "status", "created_at"], name="run_notif_biz_status_idx"),
-            models.Index(fields=["automation", "created_at"], name="run_notif_automation_idx"),
+            models.Index(fields=["agentic_task", "created_at"], name="run_notif_agentic_task_idx"),
             models.Index(fields=["run", "created_at"], name="run_notif_run_idx"),
             models.Index(fields=["target_conversation", "created_at"], name="run_notif_target_idx"),
         ]
@@ -297,6 +297,6 @@ class AgentRunNotification(models.Model):
             self.business_profile = self.run.business_profile
         if self.run_id and not self.agent_profile_id and getattr(self, "run", None):
             self.agent_profile = self.run.agent_profile
-        if self.automation_id and not self.business_profile_id and getattr(self, "automation", None):
-            self.business_profile = self.automation.business_profile
+        if self.agentic_task_id and not self.business_profile_id and getattr(self, "agentic_task", None):
+            self.business_profile = self.agentic_task.business_profile
         super().save(*args, **kwargs)

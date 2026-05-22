@@ -652,7 +652,7 @@ class ConversationFileChunk(models.Model):
 class MemoryScope(models.TextChoices):
     WORKSPACE = "workspace", "Workspace"
     AGENT = "agent", "Agent"
-    AUTOMATION = "automation", "Automation"
+    TASK = "agentic_task", "Agentic Task"
     RUN = "run", "Run"
     CONVERSATION = "conversation", "Conversation"
     CRM_CONTACT = "crm_contact", "CRM contact"
@@ -694,7 +694,7 @@ class MemoryItem(models.Model):
     Unified long-term memory record.
 
     Conversation compaction stays in CompactedHistorySegment; this model stores
-    scoped durable facts, preferences, policies, decisions, and automation state.
+    scoped durable facts, preferences, policies, decisions, and Agentic Task state.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -712,7 +712,7 @@ class MemoryItem(models.Model):
         blank=True,
     )
     custom_assistant = models.ForeignKey("assistants.CustomAssistant", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
-    automation = models.ForeignKey("automations.Automation", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
+    agentic_task = models.ForeignKey("agentic_tasks.AgenticTask", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
     run = models.ForeignKey("agent_runs.AgentRun", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
     conversation = models.ForeignKey(Conversation, related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
     crm_contact = models.ForeignKey("crm.CrmContact", related_name="memory_items", on_delete=models.SET_NULL, null=True, blank=True)
@@ -754,7 +754,7 @@ class MemoryItem(models.Model):
             models.Index(fields=["business_profile", "scope", "status"], name="memory_biz_scope_status_idx"),
             models.Index(fields=["agent_profile", "status", "updated_at"], name="memory_agent_status_time_idx"),
             models.Index(fields=["custom_assistant", "status", "updated_at"], name="mem_asst_status_time_idx"),
-            models.Index(fields=["automation", "status", "updated_at"], name="mem_auto_status_time_idx"),
+            models.Index(fields=["agentic_task", "status", "updated_at"], name="mem_task_status_time_idx"),
             models.Index(fields=["run", "created_at"], name="memory_run_created_idx"),
             models.Index(fields=["conversation", "created_at"], name="memory_conv_created_idx"),
             models.Index(fields=["crm_contact", "status"], name="memory_contact_status_idx"),
@@ -766,8 +766,8 @@ class MemoryItem(models.Model):
             self.business_profile = self.agent_profile.business_profile
         if self.custom_assistant_id and not self.business_profile_id and getattr(self, "custom_assistant", None):
             self.business_profile = self.custom_assistant.business_profile
-        if self.automation_id and not self.business_profile_id and getattr(self, "automation", None):
-            self.business_profile = self.automation.business_profile
+        if self.agentic_task_id and not self.business_profile_id and getattr(self, "agentic_task", None):
+            self.business_profile = self.agentic_task.business_profile
         if self.run_id and not self.business_profile_id and getattr(self, "run", None):
             self.business_profile = self.run.business_profile
         if self.conversation_id and not self.business_profile_id and getattr(self, "conversation", None):

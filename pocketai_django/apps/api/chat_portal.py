@@ -8,21 +8,22 @@ from apps.api.portal_chat.activity_snapshots import (
     _append_agent_run_event,
     _build_portal_agent_requests_snapshot,
     _build_portal_agent_runs_snapshot,
-    _create_portal_manual_automation_run,
-    _is_runnable_automation,
+    _create_portal_manual_agentic_task_run,
+    _is_runnable_agentic_task,
     _run_snapshot_for_portal_run,
     _serialize_agent_request_for_portal,
     _serialize_agent_run_checkpoint_for_portal,
     _serialize_agent_run_event_for_portal,
     _serialize_agent_run_for_portal,
-    _serialize_automation_for_portal,
+    _serialize_agentic_task_for_portal,
 )
 from apps.api.portal_chat.activity_actions import (
     portal_agent_request_update,
     portal_agent_run_approval,
     portal_agent_run_checkpoint_resolve,
     portal_agent_run_user_input,
-    portal_automation_manual_run,
+    portal_agentic_task_approval,
+    portal_agentic_task_manual_run,
 )
 from apps.api.portal_chat.serializers import (
     _agent_to_dict,

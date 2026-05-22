@@ -10,18 +10,18 @@ AGENT_RUN_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="start_agent_run",
         description=(
-            "Create a background AgentRun (background agent) anchored to this conversation. "
-            "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
-            "while the work happens in the Activity panel."
+            "Create a sub-agent run anchored to this conversation. "
+            "Use this when the current session needs a focused parallel investigation or multi-step branch. "
+            "The sub-agent belongs inside the current session, not the Agentic Task panel."
         ),
         properties={
             "goal": {
                 "type": "string",
-                "description": "Clear task goal for the background run.",
+                "description": "Clear goal for the sub-agent run.",
             },
             "title": {
                 "type": "string",
-                "description": "Optional short title shown in the Activity panel.",
+                "description": "Optional short title shown on the inline sub-agent card.",
             },
             "followup_mode": {
                 "type": "string",
@@ -58,7 +58,7 @@ AGENT_RUN_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
             },
             "plan": {
                 "type": "object",
-                "description": "Optional planner output to display in the Activity panel.",
+                "description": "Optional planner output for the inline sub-agent card.",
                 "additionalProperties": True,
             },
             "metadata": {
@@ -77,7 +77,7 @@ AGENT_RUN_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="list_agent_runs",
         description=(
-            "List background runs (agent workforce) for this conversation. "
+            "List sub-agent runs for this conversation. "
             "Returns status, title, and summary for each run so you can track progress and results."
         ),
         properties={
@@ -102,7 +102,7 @@ AGENT_RUN_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="get_agent_run",
         description=(
-            "Get detailed status and result of a specific background run. "
+            "Get detailed status and result of a specific sub-agent run. "
             "Use this after list_agent_runs to check on a particular task."
         ),
         properties={
@@ -120,7 +120,7 @@ AGENT_RUN_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
     _function_schema(
         name="continue_agent_run",
         description=(
-            "Continue an existing background run (background agent) with a follow-up message. "
+            "Continue an existing sub-agent run with a follow-up message. "
             "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
             "The background agent will resume with its full conversation history."
         ),

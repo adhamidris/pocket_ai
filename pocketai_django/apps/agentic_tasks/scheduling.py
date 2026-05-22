@@ -21,8 +21,8 @@ class CronSchedule:
     start_at: datetime | None = None
 
 
-def normalize_cron_schedule(trigger_config: object) -> CronSchedule:
-    config = dict(trigger_config) if isinstance(trigger_config, Mapping) else {}
+def normalize_cron_schedule(schedule_config: object) -> CronSchedule:
+    config = dict(schedule_config) if isinstance(schedule_config, Mapping) else {}
 
     expression = str(config.get("cron") or config.get("expression") or "").strip()
     tz_name = str(config.get("timezone") or config.get("tz") or "UTC").strip() or "UTC"
@@ -122,7 +122,7 @@ def compute_next_cron_trigger_at(schedule: CronSchedule, *, after: datetime | No
 
     expression = (schedule.expression or "").strip()
     if not expression:
-        raise CronScheduleError("Cron schedule requires trigger_config.cron.")
+        raise CronScheduleError("Cron schedule requires schedule_config.cron.")
 
     parts = expression.split()
     if len(parts) != 5:
@@ -183,9 +183,9 @@ def compute_next_cron_trigger_at(schedule: CronSchedule, *, after: datetime | No
     raise CronScheduleError("Unable to find next cron trigger within 366 days.")
 
 
-def compute_next_automation_schedule_at(trigger_type: str, trigger_config: object, *, after: datetime | None = None) -> datetime | None:
-    trigger_type = str(trigger_type or "").strip().lower()
-    if trigger_type != "cron":
+def compute_next_agentic_task_schedule_at(schedule_type: str, schedule_config: object, *, after: datetime | None = None) -> datetime | None:
+    schedule_type = str(schedule_type or "").strip().lower()
+    if schedule_type != "cron":
         return None
-    schedule = normalize_cron_schedule(trigger_config)
+    schedule = normalize_cron_schedule(schedule_config)
     return compute_next_cron_trigger_at(schedule, after=after)

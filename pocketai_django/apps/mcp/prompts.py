@@ -4,7 +4,7 @@ from apps.accounts.feature_flags import FeatureFlagService
 from apps.mcp.prompting import messages as _messages
 from apps.mcp.prompting import system_message as _system_message
 from apps.mcp.prompting.context_notes import (
-    _automation_resource_refs_note,
+    _agentic_task_resource_refs_note,
     _build_run_memory_context,
     _compacted_history_note,
     _conversation_files_note,

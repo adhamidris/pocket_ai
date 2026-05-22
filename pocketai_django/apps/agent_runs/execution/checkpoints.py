@@ -35,9 +35,9 @@ class AgentRunCheckpointMixin:
             .first()
         )
         timeout_seconds = None
-        automation = getattr(run, "automation", None)
-        if automation is not None:
-            config = automation.metadata if isinstance(getattr(automation, "metadata", None), Mapping) else {}
+        agentic_task = getattr(run, "agentic_task", None)
+        if agentic_task is not None:
+            config = agentic_task.metadata if isinstance(getattr(agentic_task, "metadata", None), Mapping) else {}
             timeout_seconds = config.get("checkpoint_timeout_seconds") or config.get("checkpointTimeoutSeconds")
         try:
             timeout_value = int(timeout_seconds) if timeout_seconds is not None else 86400
@@ -47,7 +47,7 @@ class AgentRunCheckpointMixin:
         expires_at = now + timedelta(seconds=timeout_value)
         values = {
             "business_profile": run.business_profile,
-            "automation": run.automation,
+            "agentic_task": run.agentic_task,
             "conversation": run.conversation,
             "child_run": child_run,
             "title": _clip_text(title, 240),
@@ -69,6 +69,12 @@ class AgentRunCheckpointMixin:
             .filter(status=AgentRunCheckpointStatus.OPEN, expires_at__lte=now)
             .order_by("expires_at")[: max(1, int(limit))]
         )
+        run_kind = str(getattr(self, "run_kind", "all") or "all").strip().lower()
+        if run_kind in {"sub_agent", "agentic_task"}:
+            due = [
+                checkpoint for checkpoint in due
+                if bool(getattr(checkpoint.run, "agentic_task_id", None)) == (run_kind == "agentic_task")
+            ]
         expired = 0
         for checkpoint in due:
             run = checkpoint.run

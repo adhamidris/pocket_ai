@@ -1,6 +1,4 @@
-"""
-Persistent task automation MCP tool handlers.
-"""
+"""Persistent Agentic Task MCP tool handlers."""
 
 from __future__ import annotations
 
@@ -13,44 +11,47 @@ from apps.conversations.models import Conversation
 from ..types import ToolExecutionContext
 
 
-def _automation_payload(automation) -> dict[str, object]:
-    instructions = automation.instructions if isinstance(automation.instructions, dict) else {}
-    trigger_config = automation.trigger_config if isinstance(automation.trigger_config, dict) else {}
-    compact_trigger: dict[str, object] = {}
+def _agentic_task_payload(agentic_task) -> dict[str, object]:
+    instructions = agentic_task.instructions if isinstance(agentic_task.instructions, dict) else {}
+    schedule_config = agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {}
+    compact_schedule: dict[str, object] = {}
     for key in ("type", "cron", "timezone"):
-        value = trigger_config.get(key)
+        value = schedule_config.get(key)
         if isinstance(value, str) and value.strip():
-            compact_trigger[key] = value.strip()[:160]
+            compact_schedule[key] = value.strip()[:160]
 
     payload = {
-        "id": str(automation.id),
-        "agent_id": str(automation.agent_profile_id),
-        "name": automation.name,
-        "status": automation.status,
-        "visibility": automation.visibility,
-        "trigger_type": automation.trigger_type,
+        "id": str(agentic_task.id),
+        "agent_id": str(agentic_task.agent_profile_id),
+        "active_conversation_id": str(agentic_task.active_conversation_id) if agentic_task.active_conversation_id else None,
+        "name": agentic_task.name,
+        "status": agentic_task.status,
+        "visibility": agentic_task.visibility,
         "goal": str(instructions.get("goal") or ""),
-        "trigger_config": compact_trigger,
-        "next_trigger_at": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
-        "last_triggered_at": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
-        "last_error": automation.last_error or "",
+        "schedule_enabled": bool(agentic_task.schedule_enabled),
+        "schedule_config": compact_schedule,
+        "next_trigger_at": agentic_task.next_trigger_at.isoformat() if agentic_task.next_trigger_at else None,
+        "last_triggered_at": agentic_task.last_triggered_at.isoformat() if agentic_task.last_triggered_at else None,
+        "last_error": agentic_task.last_error or "",
     }
     return payload
 
 
-def _task_trigger_config_from_args(arguments: Mapping[str, object], trigger_type: str, *, current: Mapping[str, object] | None = None) -> dict[str, object]:
-    raw = arguments.get("trigger_config") if "trigger_config" in arguments else arguments.get("triggerConfig")
+def _task_schedule_config_from_args(arguments: Mapping[str, object], *, current: Mapping[str, object] | None = None) -> dict[str, object]:
+    raw = arguments.get("schedule_config") if "schedule_config" in arguments else arguments.get("scheduleConfig")
     source = raw if isinstance(raw, Mapping) else current if isinstance(current, Mapping) else {}
-    if trigger_type == "schedule":
-        out: dict[str, object] = {"type": "cron"}
-        cron = str(source.get("cron") or "").strip()
-        timezone_value = str(source.get("timezone") or "").strip()
-        if cron:
-            out["cron"] = cron[:120]
-        if timezone_value:
-            out["timezone"] = timezone_value[:120]
-        return out
-    return {}
+    out: dict[str, object] = {"type": "cron"}
+    cron = str(source.get("cron") or "").strip()
+    timezone_value = str(source.get("timezone") or "").strip()
+    if cron:
+        out["cron"] = cron[:120]
+    if timezone_value:
+        out["timezone"] = timezone_value[:120]
+    return out
+
+
+def _has_cron_schedule(schedule_config: Mapping[str, object] | None) -> bool:
+    return bool(str((schedule_config or {}).get("cron") or "").strip())
 
 
 def _first_present(arguments: Mapping[str, object], *keys: str) -> tuple[bool, object]:
@@ -76,7 +77,7 @@ def _task_instruction_spec_from_args(
     if not spec.get("workflow_type") or not spec.get("memory_shape"):
         inferred_type, inferred_shape = infer_workflow_type_and_memory_shape(
             goal=spec.get("goal") or arguments.get("goal"),
-            trigger_type=arguments.get("trigger_type") or arguments.get("triggerType"),
+            schedule_type="schedule" if arguments.get("schedule_enabled") or arguments.get("scheduleEnabled") else "manual",
         )
         spec.setdefault("workflow_type", inferred_type)
         spec.setdefault("memory_shape", inferred_shape)
@@ -88,9 +89,9 @@ def _has_task_instruction_updates(arguments: Mapping[str, object]) -> bool:
     return "goal" in arguments
 
 
-def _remember_automation_resource_ref(
+def _remember_agentic_task_resource_ref(
     conversation: Conversation,
-    automation,
+    agentic_task,
     *,
     purpose: str,
     pending_activation: bool = False,
@@ -98,36 +99,36 @@ def _remember_automation_resource_ref(
     metadata = dict(conversation.metadata) if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     refs_raw = metadata.get("resource_refs")
     refs = [dict(item) for item in refs_raw if isinstance(item, Mapping)] if isinstance(refs_raw, list) else []
-    automation_id = str(getattr(automation, "id", "") or "").strip()
-    if not automation_id:
+    agentic_task_id = str(getattr(agentic_task, "id", "") or "").strip()
+    if not agentic_task_id:
         return
 
     refs = [
         ref
         for ref in refs
         if not (
-            str(ref.get("type") or "").strip().lower() in {"automation", "task"}
-            and str(ref.get("id") or "").strip() == automation_id
+            str(ref.get("type") or "").strip().lower() in {"agentic_task", "task"}
+            and str(ref.get("id") or "").strip() == agentic_task_id
         )
     ]
     refs.insert(
         0,
         {
-            "type": "automation",
-            "id": automation_id,
-            "name": str(getattr(automation, "name", "") or "")[:160],
-            "status": str(getattr(automation, "status", "") or ""),
+            "type": "agentic_task",
+            "id": agentic_task_id,
+            "name": str(getattr(agentic_task, "name", "") or "")[:160],
+            "status": str(getattr(agentic_task, "status", "") or ""),
             "purpose": str(purpose or "reference")[:80],
-            "agent_id": str(getattr(automation, "agent_profile_id", "") or ""),
-            "trigger_type": str(getattr(automation, "trigger_type", "") or ""),
+            "agent_id": str(getattr(agentic_task, "agent_profile_id", "") or ""),
+            "schedule_enabled": bool(getattr(agentic_task, "schedule_enabled", False)),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
     )
     metadata["resource_refs"] = refs[:12]
     if pending_activation:
-        metadata["pending_automation_activation_id"] = automation_id
-    elif str(metadata.get("pending_automation_activation_id") or "") == automation_id:
-        metadata.pop("pending_automation_activation_id", None)
+        metadata["pending_agentic_task_activation_id"] = agentic_task_id
+    elif str(metadata.get("pending_agentic_task_activation_id") or "") == agentic_task_id:
+        metadata.pop("pending_agentic_task_activation_id", None)
 
     conversation.metadata = metadata
     conversation.save(update_fields=["metadata", "last_activity_at"])
@@ -158,9 +159,9 @@ def _list_tasks_handler(
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.automations.models import Automation
+    from apps.agentic_tasks.models import AgenticTask
 
-    qs = Automation.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
+    qs = AgenticTask.objects.select_related("agent_profile").filter(business_profile_id=conversation.business_profile_id)
     agent_id_raw = arguments.get("agent_id") or arguments.get("agentId")
     if agent_id_raw:
         try:
@@ -171,10 +172,10 @@ def _list_tasks_handler(
     if status and status != "all":
         qs = qs.filter(status=status)
     limit = max(1, min(int(arguments.get("limit") or 20), 50))
-    return {"tool": "list_tasks", "status": "ok", "tasks": [_automation_payload(item) for item in qs.order_by("-updated_at")[:limit]]}
+    return {"tool": "list_tasks", "status": "ok", "agentic_tasks": [_agentic_task_payload(item) for item in qs.order_by("-updated_at")[:limit]]}
 
 
-def _draft_task_handler(
+def _draft_agentic_task_handler(
     arguments: Mapping[str, object],
     *,
     conversation: Conversation,
@@ -182,35 +183,37 @@ def _draft_task_handler(
 ) -> Mapping[str, object]:
     del context
     from apps.agent_runs.models import AgentRunVisibility
-    from apps.automations.models import Automation, AutomationStatus, AutomationTriggerType
+    from apps.agentic_tasks.models import AgenticTask, AgenticTaskStatus
 
     agent, error = _resolve_task_agent(conversation, arguments.get("agent_id") or arguments.get("agentId"))
     if error:
-        return {"tool": "draft_task", **error}
+        return {"tool": "draft_agentic_task", **error}
     name = str(arguments.get("name") or "").strip()
     goal = str(arguments.get("goal") or "").strip()
     if not name or not goal:
-        return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "name and goal are required."}
-    trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or AutomationTriggerType.SCHEDULE).strip().lower()
-    if trigger_type not in {choice for choice, _ in AutomationTriggerType.choices}:
-        return {"tool": "draft_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
+        return {"tool": "draft_agentic_task", "status": "error", "error_code": "validation_failed", "error": "name and goal are required."}
     visibility = str(arguments.get("visibility") or AgentRunVisibility.INITIATOR).strip().lower()
     if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
         visibility = AgentRunVisibility.INITIATOR
+    schedule_config = _task_schedule_config_from_args(arguments)
+    schedule_enabled = bool(arguments.get("schedule_enabled") if "schedule_enabled" in arguments else arguments.get("scheduleEnabled"))
+    if schedule_enabled and not _has_cron_schedule(schedule_config):
+        schedule_enabled = False
+        schedule_config = {}
     instructions = _task_instruction_spec_from_args(arguments)
     workflow_type = str(instructions.get("workflow_type") or "general")
     memory_shape = str(instructions.get("memory_shape") or "general")
     description = str(arguments.get("description") or "").strip()[:4000]
-    automation = Automation.objects.create(
+    agentic_task = AgenticTask.objects.create(
         business_profile_id=conversation.business_profile_id,
         agent_profile=agent,
         created_by=getattr(conversation, "owner_user", None) or getattr(agent, "user", None),
         name=name[:160],
         description=description,
-        status=AutomationStatus.DRAFT,
+        status=AgenticTaskStatus.DRAFT,
         visibility=visibility,
-        trigger_type=trigger_type,
-        trigger_config=_task_trigger_config_from_args(arguments, trigger_type),
+        schedule_enabled=schedule_enabled,
+        schedule_config=schedule_config,
         instructions=instructions,
         metadata={
             "source": "chat_task_draft",
@@ -219,22 +222,22 @@ def _draft_task_handler(
             "memory_shape": memory_shape,
         },
     )
-    _remember_automation_resource_ref(
+    _remember_agentic_task_resource_ref(
         conversation,
-        automation,
+        agentic_task,
         purpose="pending activation",
         pending_activation=True,
     )
     return {
-        "tool": "draft_task",
+        "tool": "draft_agentic_task",
         "status": "ok",
-        "task": _automation_payload(automation),
+        "agentic_task": _agentic_task_payload(agentic_task),
         "activation_required": True,
-        "hint": "Task draft saved. Ask the user to approve activation before calling request_task_activation with approved=true.",
+        "hint": "Agentic Task draft saved. Ask the user to approve activation before calling request_agentic_task_activation with approved=true.",
     }
 
 
-def _update_task_handler(
+def _update_agentic_task_handler(
     arguments: Mapping[str, object],
     *,
     conversation: Conversation,
@@ -242,61 +245,58 @@ def _update_task_handler(
 ) -> Mapping[str, object]:
     del context
     from apps.agent_runs.models import AgentRunVisibility
-    from apps.automations.models import Automation, AutomationTriggerType
+    from apps.agentic_tasks.models import AgenticTask
 
     try:
-        task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
+        task_id = uuid.UUID(str(arguments.get("agentic_task_id") or arguments.get("agenticTaskId") or arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
-        return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    automation = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
-    if automation is None:
-        return {"tool": "update_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
+        return {"tool": "update_agentic_task", "status": "error", "error_code": "validation_failed", "error": "agentic_task_id must be a UUID."}
+    agentic_task = AgenticTask.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if agentic_task is None:
+        return {"tool": "update_agentic_task", "status": "error", "error_code": "not_found", "error": "Agentic Task not found."}
     updates: list[str] = []
     if "name" in arguments:
-        automation.name = str(arguments.get("name") or "").strip()[:160]
+        agentic_task.name = str(arguments.get("name") or "").strip()[:160]
         updates.append("name")
     if "description" in arguments:
-        automation.description = str(arguments.get("description") or "").strip()[:4000]
+        agentic_task.description = str(arguments.get("description") or "").strip()[:4000]
         updates.append("description")
     if _has_task_instruction_updates(arguments):
-        current = dict(automation.instructions or {}) if isinstance(automation.instructions, dict) else {}
-        automation.instructions = _task_instruction_spec_from_args(arguments, current=current)
-        metadata = dict(automation.metadata or {}) if isinstance(automation.metadata, dict) else {}
-        if automation.instructions.get("workflow_type"):
-            metadata["workflow_type"] = automation.instructions.get("workflow_type")
-        if automation.instructions.get("memory_shape"):
-            metadata["memory_shape"] = automation.instructions.get("memory_shape")
-        automation.metadata = metadata
+        current = dict(agentic_task.instructions or {}) if isinstance(agentic_task.instructions, dict) else {}
+        agentic_task.instructions = _task_instruction_spec_from_args(arguments, current=current)
+        metadata = dict(agentic_task.metadata or {}) if isinstance(agentic_task.metadata, dict) else {}
+        if agentic_task.instructions.get("workflow_type"):
+            metadata["workflow_type"] = agentic_task.instructions.get("workflow_type")
+        if agentic_task.instructions.get("memory_shape"):
+            metadata["memory_shape"] = agentic_task.instructions.get("memory_shape")
+        agentic_task.metadata = metadata
         updates.append("instructions")
         updates.append("metadata")
-    if "trigger_type" in arguments or "triggerType" in arguments:
-        trigger_type = str(arguments.get("trigger_type") or arguments.get("triggerType") or "").strip().lower()
-        if trigger_type not in {choice for choice, _ in AutomationTriggerType.choices}:
-            return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid trigger_type."}
-        automation.trigger_type = trigger_type
-        updates.append("trigger_type")
-    if "trigger_config" in arguments or "triggerConfig" in arguments or "trigger_type" in arguments or "triggerType" in arguments:
-        automation.trigger_config = _task_trigger_config_from_args(arguments, automation.trigger_type, current=automation.trigger_config)
-        updates.append("trigger_config")
+    if "schedule_enabled" in arguments or "scheduleEnabled" in arguments:
+        agentic_task.schedule_enabled = bool(arguments.get("schedule_enabled") if "schedule_enabled" in arguments else arguments.get("scheduleEnabled"))
+        updates.append("schedule_enabled")
+    if "schedule_config" in arguments or "scheduleConfig" in arguments:
+        agentic_task.schedule_config = _task_schedule_config_from_args(arguments, current=agentic_task.schedule_config)
+        updates.append("schedule_config")
     if "visibility" in arguments:
         visibility = str(arguments.get("visibility") or "").strip().lower()
         if visibility not in {choice for choice, _ in AgentRunVisibility.choices}:
-            return {"tool": "update_task", "status": "error", "error_code": "validation_failed", "error": "Invalid visibility."}
-        automation.visibility = visibility
+            return {"tool": "update_agentic_task", "status": "error", "error_code": "validation_failed", "error": "Invalid visibility."}
+        agentic_task.visibility = visibility
         updates.append("visibility")
     if updates:
-        automation.save(update_fields=sorted(set([*updates, "updated_at"])))
-        purpose = "pending activation" if automation.status == "draft" else "updated"
-        _remember_automation_resource_ref(
+        agentic_task.save(update_fields=sorted(set([*updates, "updated_at"])))
+        purpose = "pending activation" if agentic_task.status == "draft" else "updated"
+        _remember_agentic_task_resource_ref(
             conversation,
-            automation,
+            agentic_task,
             purpose=purpose,
-            pending_activation=automation.status == "draft",
+            pending_activation=agentic_task.status == "draft",
         )
-    return {"tool": "update_task", "status": "ok", "task": _automation_payload(automation)}
+    return {"tool": "update_agentic_task", "status": "ok", "agentic_task": _agentic_task_payload(agentic_task)}
 
 
-def _request_task_activation_handler(
+def _request_agentic_task_activation_handler(
     arguments: Mapping[str, object],
     *,
     conversation: Conversation,
@@ -304,68 +304,71 @@ def _request_task_activation_handler(
 ) -> Mapping[str, object]:
     del context
     from django.utils import timezone as django_timezone
-    from apps.automations.models import Automation, AutomationStatus, AutomationTriggerType
-    from apps.automations.scheduling import CronScheduleError, compute_next_automation_schedule_at
+    from apps.agentic_tasks.models import AgenticTask, AgenticTaskStatus
+    from apps.agentic_tasks.scheduling import CronScheduleError, compute_next_agentic_task_schedule_at
 
     try:
-        task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
+        task_id = uuid.UUID(str(arguments.get("agentic_task_id") or arguments.get("agenticTaskId") or arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
-        return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    automation = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
-    if automation is None:
-        return {"tool": "request_task_activation", "status": "error", "error_code": "not_found", "error": "Task not found."}
+        return {"tool": "request_agentic_task_activation", "status": "error", "error_code": "validation_failed", "error": "agentic_task_id must be a UUID."}
+    agentic_task = AgenticTask.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if agentic_task is None:
+        return {"tool": "request_agentic_task_activation", "status": "error", "error_code": "not_found", "error": "Agentic Task not found."}
     if not bool(arguments.get("approved")):
         return {
-            "tool": "request_task_activation",
+            "tool": "request_agentic_task_activation",
             "status": "needs_user",
-            "task": _automation_payload(automation),
-            "prompt": "Please approve activating this persistent task before it starts running.",
+            "agentic_task": _agentic_task_payload(agentic_task),
+            "prompt": "Please approve activating this Agentic Task before it starts running.",
         }
     next_trigger_at = None
-    if automation.trigger_type == AutomationTriggerType.SCHEDULE:
+    if agentic_task.schedule_enabled and not _has_cron_schedule(agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {}):
+        agentic_task.schedule_enabled = False
+        agentic_task.schedule_config = {}
+    if agentic_task.schedule_enabled:
         try:
-            next_trigger_at = compute_next_automation_schedule_at("cron", dict(automation.trigger_config or {}), after=django_timezone.now())
+            next_trigger_at = compute_next_agentic_task_schedule_at("cron", dict(agentic_task.schedule_config or {}), after=django_timezone.now())
         except CronScheduleError as exc:
-            return {"tool": "request_task_activation", "status": "error", "error_code": "validation_failed", "error": str(exc)}
-    automation.status = AutomationStatus.ACTIVE
-    automation.next_trigger_at = next_trigger_at
-    automation.save(update_fields=["status", "next_trigger_at", "updated_at"])
-    _remember_automation_resource_ref(
+            return {"tool": "request_agentic_task_activation", "status": "error", "error_code": "validation_failed", "error": str(exc)}
+    agentic_task.status = AgenticTaskStatus.ACTIVE
+    agentic_task.next_trigger_at = next_trigger_at
+    agentic_task.save(update_fields=["status", "schedule_enabled", "schedule_config", "next_trigger_at", "updated_at"])
+    _remember_agentic_task_resource_ref(
         conversation,
-        automation,
+        agentic_task,
         purpose="active",
         pending_activation=False,
     )
-    return {"tool": "request_task_activation", "status": "ok", "task": _automation_payload(automation), "activated": True}
+    return {"tool": "request_agentic_task_activation", "status": "ok", "agentic_task": _agentic_task_payload(agentic_task), "activated": True}
 
 
-def _pause_task_handler(
+def _pause_agentic_task_handler(
     arguments: Mapping[str, object],
     *,
     conversation: Conversation,
     context: ToolExecutionContext,
 ) -> Mapping[str, object]:
     del context
-    from apps.automations.models import Automation, AutomationStatus
+    from apps.agentic_tasks.models import AgenticTask, AgenticTaskStatus
 
     try:
-        task_id = uuid.UUID(str(arguments.get("task_id") or arguments.get("taskId") or ""))
+        task_id = uuid.UUID(str(arguments.get("agentic_task_id") or arguments.get("agenticTaskId") or arguments.get("task_id") or arguments.get("taskId") or ""))
     except (TypeError, ValueError):
-        return {"tool": "pause_task", "status": "error", "error_code": "validation_failed", "error": "task_id must be a UUID."}
-    automation = Automation.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
-    if automation is None:
-        return {"tool": "pause_task", "status": "error", "error_code": "not_found", "error": "Task not found."}
-    metadata = dict(automation.metadata or {}) if isinstance(automation.metadata, dict) else {}
+        return {"tool": "pause_agentic_task", "status": "error", "error_code": "validation_failed", "error": "agentic_task_id must be a UUID."}
+    agentic_task = AgenticTask.objects.filter(id=task_id, business_profile_id=conversation.business_profile_id).first()
+    if agentic_task is None:
+        return {"tool": "pause_agentic_task", "status": "error", "error_code": "not_found", "error": "Agentic Task not found."}
+    metadata = dict(agentic_task.metadata or {}) if isinstance(agentic_task.metadata, dict) else {}
     if arguments.get("reason"):
         metadata["last_pause_reason"] = str(arguments.get("reason"))[:500]
-    automation.status = AutomationStatus.PAUSED
-    automation.next_trigger_at = None
-    automation.metadata = metadata
-    automation.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])
-    _remember_automation_resource_ref(
+    agentic_task.status = AgenticTaskStatus.PAUSED
+    agentic_task.next_trigger_at = None
+    agentic_task.metadata = metadata
+    agentic_task.save(update_fields=["status", "next_trigger_at", "metadata", "updated_at"])
+    _remember_agentic_task_resource_ref(
         conversation,
-        automation,
+        agentic_task,
         purpose="paused",
         pending_activation=False,
     )
-    return {"tool": "pause_task", "status": "ok", "task": _automation_payload(automation)}
+    return {"tool": "pause_agentic_task", "status": "ok", "agentic_task": _agentic_task_payload(agentic_task)}

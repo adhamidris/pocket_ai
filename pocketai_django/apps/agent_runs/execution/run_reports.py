@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import Mapping
 
 from apps.agent_runs.execution.audit import _clip_text, _extract_json_object, _json_safe, _stable_digest
-from apps.agent_runs.models import AgentRun, AgentRunNotification, AgentRunNotificationStatus, AgentRunStatus
-from apps.automations.models import Automation, AutomationDedupeKey
+from apps.agent_runs.models import AgentRun, AgentRunStatus
 
 
 class AgentRunReportMixin:
@@ -83,7 +82,7 @@ class AgentRunReportMixin:
             report["changed_entities"] = [
                 {
                     "type": "run_response",
-                    "identity": str(run.automation_id or run.id),
+                    "identity": str(run.agentic_task_id or run.id),
                     "state": {"response_hash": _stable_digest(response_text or report)},
                 }
             ]
@@ -100,11 +99,6 @@ class AgentRunReportMixin:
             return dict(entry)
         return None
 
-    def _workflow_dedupe_key(self, *, automation: Automation | None, report: Mapping[str, object]) -> str:
-        entities = report.get("changed_entities")
-        candidate = entities if isinstance(entities, list) and entities else report.get("notification_candidate") or report
-        return f"workflow_state:{_stable_digest(candidate)}"
-
     def _persist_run_report(
         self,
         *,
@@ -113,76 +107,13 @@ class AgentRunReportMixin:
         next_status: str,
         now,
     ) -> dict[str, object]:
-        automation = getattr(run, "automation", None)
-        dedupe_key = self._workflow_dedupe_key(automation=automation, report=report)
-        duplicate = False
-        if automation is not None and dedupe_key:
-            duplicate = not self._record_workflow_dedupe_key(automation, dedupe_key)
-
-        if automation is not None:
+        agentic_task = getattr(run, "agentic_task", None)
+        if agentic_task is not None:
             self._update_workflow_state_from_report(
-                automation=automation,
+                agentic_task=agentic_task,
                 run=run,
                 report=report,
-                dedupe_key=dedupe_key,
-                duplicate=duplicate,
                 now=now,
             )
 
-        return {"dedupe_key": dedupe_key, "duplicate": duplicate}
-
-    def _persist_run_notification(
-        self,
-        *,
-        run: AgentRun,
-        report: Mapping[str, object],
-        dedupe_key: str,
-        duplicate: bool,
-        now,
-    ) -> None:
-        candidate = report.get("notification_candidate")
-        if not isinstance(candidate, Mapping):
-            return
-        automation = getattr(run, "automation", None)
-        target_conversation = getattr(automation, "conversation", None) if automation is not None else None
-        if target_conversation is None:
-            target_conversation = getattr(run, "conversation", None)
-        status = (
-            AgentRunNotificationStatus.SUPPRESSED
-            if duplicate
-            else AgentRunNotificationStatus.DELIVERED
-            if target_conversation is not None
-            else AgentRunNotificationStatus.CANDIDATE
-        )
-        defaults = {
-            "business_profile": run.business_profile,
-            "agent_profile": run.agent_profile,
-            "owner_agent_profile": getattr(automation, "agent_profile", None) if automation is not None else run.agent_profile,
-            "automation": automation,
-            "target_conversation": target_conversation,
-            "status": status,
-            "kind": str(candidate.get("kind") or "run_result")[:48],
-            "priority": str(candidate.get("priority") or "normal")[:24],
-            "title": str(candidate.get("title") or run.title or "Run update")[:240],
-            "body": _clip_text(candidate.get("body") or "", 8000),
-            "payload": dict(candidate.get("payload") or {}) if isinstance(candidate.get("payload"), Mapping) else {},
-            "delivered_at": now if status == AgentRunNotificationStatus.DELIVERED else None,
-        }
-        AgentRunNotification.objects.update_or_create(
-            run=run,
-            dedupe_key=(dedupe_key or "")[:255],
-            defaults=defaults,
-        )
-
-    def _record_workflow_dedupe_key(self, automation: Automation, dedupe_key: str) -> bool:
-        if not dedupe_key:
-            return True
-        try:
-            AutomationDedupeKey.objects.create(
-                business_profile=automation.business_profile,
-                automation=automation,
-                dedupe_key=dedupe_key[:255],
-            )
-            return True
-        except Exception:
-            return False
+        return {"persisted": bool(agentic_task is not None)}

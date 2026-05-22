@@ -133,17 +133,17 @@ def _controls_tool_description(tool_name: str, description: str, *, source_type:
 
     localized_overrides = {
         "continue_agent_run": _(
-            "Continue an existing background run (background agent) with a follow-up message. "
-            "Use this to send additional instructions to a completed or waiting run instead of creating a new one. "
-            "The background agent will resume with its full conversation history."
+            "Continue an existing sub-agent run with a follow-up message. "
+            "Use this to send additional instructions to a completed or waiting sub-agent instead of creating a new one. "
+            "The sub-agent will resume with its full conversation history."
         ),
         "start_agent_run": _(
-            "Create a background AgentRun (background agent) anchored to this conversation. "
-            "Use this when the visitor asks for a long-running or multi-step task so the chat can continue "
-            "while the work happens in the Activity panel."
+            "Create a sub-agent run anchored to this conversation. "
+            "Use this when the current session needs a focused parallel investigation or multi-step branch. "
+            "The sub-agent belongs inside the current session, not the Agentic Task panel."
         ),
         "get_agent_run": _(
-            "Get detailed status and result of a specific background run. "
+            "Get detailed status and result of a specific sub-agent run. "
             "Use this after list_agent_runs to check on a particular task."
         ),
         "initiate_phone_call": _(
@@ -332,10 +332,10 @@ def _controls_agentic_operational_tool_names(
         "get_agent_run",
         "continue_agent_run",
         "list_tasks",
-        "draft_task",
-        "update_task",
-        "request_task_activation",
-        "pause_task",
+        "draft_agentic_task",
+        "update_agentic_task",
+        "request_agentic_task_activation",
+        "pause_agentic_task",
         "search_memory",
         "save_memory",
         "forget_memory",

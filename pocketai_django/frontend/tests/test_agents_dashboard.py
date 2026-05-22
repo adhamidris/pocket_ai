@@ -6,7 +6,7 @@ from django.urls import reverse
 
 from apps.accounts.models import AgentProfile, BusinessProfile, RegistrationSession
 from apps.assistants.models import CustomAssistant
-from apps.automations.models import Automation, AutomationTriggerType
+from apps.agentic_tasks.models import AgenticTask
 
 
 User = get_user_model()
@@ -50,45 +50,46 @@ class AgentsDashboardTests(TestCase):
         self.assertNotIn('data-agent-tab="tasks"', content)
         self.assertNotIn("Manage the main agent", content)
 
-    def test_automations_dashboard_is_separate_from_custom_assistants(self) -> None:
+    def test_agentic_tasks_dashboard_is_separate_from_custom_assistants(self) -> None:
         self.client.force_login(self.user)
-        response = self.client.get(reverse("frontend:dashboard-automations"))
+        response = self.client.get(reverse("frontend:dashboard-agentic-tasks"))
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode("utf-8")
-        self.assertIn("Automations", content)
-        self.assertIn("Create automation", content)
+        self.assertIn("Agentic Tasks", content)
+        self.assertIn("Create task", content)
         self.assertIn('data-automation-drawer aria-hidden="true"', content)
         self.assertIn("Run history", content)
-        self.assertIn('data-automations-page', content)
+        self.assertIn('data-agentic-tasks-page', content)
         self.assertNotIn("data-agent-panel", content)
 
-    def test_product_api_separates_custom_assistants_and_automations(self) -> None:
+    def test_product_api_separates_custom_assistants_and_agentic_tasks(self) -> None:
         assistant = CustomAssistant.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Proposal Assistant",
         )
-        automation = Automation.objects.create(
+        agentic_task = AgenticTask.objects.create(
             business_profile=self.business,
             agent_profile=self.agent,
             created_by=self.user,
             name="Daily Digest",
-            trigger_type=AutomationTriggerType.SCHEDULE,
+            schedule_enabled=True,
+            schedule_config={"cron": "0 9 * * *"},
         )
         self.client.force_login(self.user)
 
         assistants = self.client.get(
             reverse("api:custom-assistants", args=[self.agent.id]),
         ).json()["customAssistants"]
-        automations = self.client.get(
-            reverse("api:automations", args=[self.agent.id]),
-        ).json()["automations"]
+        agentic_tasks = self.client.get(
+            reverse("api:agentic-tasks", args=[self.agent.id]),
+        ).json()["agenticTasks"]
 
-        automation.refresh_from_db()
+        agentic_task.refresh_from_db()
         self.assertEqual([item["id"] for item in assistants], [str(assistant.id)])
-        self.assertEqual([item["id"] for item in automations], [str(automation.id)])
+        self.assertEqual([item["id"] for item in agentic_tasks], [str(agentic_task.id)])
 
     def test_connectors_dashboard_unifies_native_and_mcp_surfaces(self) -> None:
         self.client.force_login(self.user)

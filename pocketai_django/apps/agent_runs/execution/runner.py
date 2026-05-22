@@ -35,7 +35,6 @@ from apps.agent_runs.models import (
     AgentRunSource,
     AgentRunStatus,
 )
-from apps.automations.models import AutomationDedupeKey
 from apps.conversations.models import ConversationToolApproval, ConversationToolApprovalStatus
 from apps.mcp.text.sanitizer import has_dsml_markup, strip_dsml_markup
 from apps.rag.observability.logging import structured_log
@@ -420,7 +419,7 @@ class AgentRunExecutorMixin(AgentRunConversationTranscriptMixin, AgentRunOutcome
             raw_response_text_value = str(getattr(turn, "response_text", "") or "").strip()
             response_text_value = raw_response_text_value
             malformed_final_reason = ""
-            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE}:
+            if run.source in {AgentRunSource.TASK, AgentRunSource.SCHEDULE}:
                 if has_dsml_markup(raw_response_text_value):
                     stripped = strip_dsml_markup(raw_response_text_value).strip()
                     response_text_value = stripped
@@ -639,23 +638,6 @@ class AgentRunExecutorMixin(AgentRunConversationTranscriptMixin, AgentRunOutcome
                 approval_preview=approval_preview,
             )
             base_result["run_report"] = run_report
-            report_dedupe_key = ""
-            if run.automation_id:
-                report_dedupe_key = self._workflow_dedupe_key(automation=run.automation, report=run_report)
-                if report_dedupe_key:
-                    next_metadata["run_report_dedupe_key"] = report_dedupe_key
-                    prior_duplicate = AutomationDedupeKey.objects.filter(
-                        automation_id=run.automation_id,
-                        dedupe_key=report_dedupe_key[:255],
-                    ).exists()
-                    if prior_duplicate and next_status == AgentRunStatus.WAITING_APPROVAL:
-                        next_status = AgentRunStatus.COMPLETED
-                        next_metadata["suppressed_duplicate_approval"] = True
-                        next_metadata.pop("pending_approval_id", None)
-                        next_metadata.pop("pending_tool_call", None)
-                        run_report["status"] = "no_change"
-                        run_report["notification_candidate"] = None
-                        base_result["run_report"] = run_report
             if next_status == AgentRunStatus.WAITING_USER and isinstance(pause_payload, dict):
                 next_metadata["pending_user_input"] = dict(pause_payload)
             if next_status == AgentRunStatus.WAITING_EXTERNAL and external_request_id:
@@ -724,7 +706,7 @@ class AgentRunExecutorMixin(AgentRunConversationTranscriptMixin, AgentRunOutcome
                     pass
 
             report_state: dict[str, object] = {}
-            if run.source in {AgentRunSource.AUTOMATION, AgentRunSource.SCHEDULE}:
+            if run.source in {AgentRunSource.TASK, AgentRunSource.SCHEDULE}:
                 report_state = self._persist_run_report(
                     run=run,
                     report=run_report,
@@ -735,13 +717,6 @@ class AgentRunExecutorMixin(AgentRunConversationTranscriptMixin, AgentRunOutcome
                     next_metadata = dict(next_metadata)
                     next_metadata["run_report_state"] = report_state
                     AgentRun.objects.filter(id=run.id).update(metadata=next_metadata, result={**base_result, "run_report_state": report_state}, updated_at=now)
-                self._persist_run_notification(
-                    run=run,
-                    report=run_report,
-                    dedupe_key=str(report_state.get("dedupe_key") or ""),
-                    duplicate=bool(report_state.get("duplicate")),
-                    now=now,
-                )
 
             self._emit_run_outcome_events(
                 run=run,

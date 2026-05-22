@@ -28,7 +28,7 @@ from apps.mcp.prompting.history_window import (
     limit_messages_for_stage,
 )
 from apps.mcp.prompting.context_notes import (
-    _automation_resource_refs_note,
+    _agentic_task_resource_refs_note,
     _build_run_memory_context,
     _compacted_history_note,
     _conversation_files_note,
@@ -148,9 +148,9 @@ def build_messages(
         if recent_search_refs_note:
             system_sections.append(recent_search_refs_note.strip())
 
-        automation_resource_refs_note = _automation_resource_refs_note(conversation)
-        if automation_resource_refs_note:
-            system_sections.append(automation_resource_refs_note.strip())
+        agentic_task_resource_refs_note = _agentic_task_resource_refs_note(conversation)
+        if agentic_task_resource_refs_note:
+            system_sections.append(agentic_task_resource_refs_note.strip())
 
         files_note = _conversation_files_note(conversation)
         if files_note:
@@ -216,7 +216,7 @@ def build_messages(
 
         messages: list[Mapping[str, object]] = [{"role": "system", "content": system_message}]
 
-        # Determine if this is an execution conversation for a background run.
+        # Determine if this is an execution conversation for a sub-agent run.
         # Use is_agent_run which is already computed above, or check metadata directly
         convo_meta_for_history = getattr(conversation, "metadata", None)
         convo_meta_for_history_map = convo_meta_for_history if isinstance(convo_meta_for_history, Mapping) else {}
@@ -226,7 +226,7 @@ def build_messages(
             or convo_meta_for_history_map.get("agentRunId")
         )
 
-        # Execution conversations (agent workforce) get larger history to maintain context
+        # Execution conversations get larger history to maintain context
         # across multi-step tool executions and approval flows
         if is_execution_conversation:
             history_limit = int(getattr(settings, "MCP_EXECUTION_HISTORY_LIMIT", 30))

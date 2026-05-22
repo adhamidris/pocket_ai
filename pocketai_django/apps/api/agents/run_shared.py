@@ -30,14 +30,13 @@ from apps.agent_runs.models import (
     AgentRunVisibility,
 )
 from apps.assistants.models import CustomAssistant, CustomAssistantStatus
-from apps.automations.models import (
-    Automation,
-    AutomationAutonomyMode,
-    AutomationReviewMode,
-    AutomationStatus,
-    AutomationTriggerType,
+from apps.agentic_tasks.models import (
+    AgenticTask,
+    AgenticTaskAutonomyMode,
+    AgenticTaskReviewMode,
+    AgenticTaskStatus,
 )
-from apps.automations.scheduling import CronScheduleError, compute_next_automation_schedule_at
+from apps.agentic_tasks.scheduling import CronScheduleError, compute_next_agentic_task_schedule_at
 from apps.conversations.instruction_contracts import normalize_workflow_instructions
 from apps.conversations.models import (
     Conversation,
@@ -99,38 +98,35 @@ def _run_visibility_filter(request: HttpRequest, *, agent: AgentProfile) -> Q:
     return base
 
 
-def _run_snapshot(automation: Automation | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    if automation is not None:
-        instructions = automation.instructions if isinstance(automation.instructions, dict) else {}
+def _run_snapshot(agentic_task: AgenticTask | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    if agentic_task is not None:
+        instructions = agentic_task.instructions if isinstance(agentic_task.instructions, dict) else {}
         return normalize_workflow_instructions(
             {
                 **instructions,
-                "name": automation.name,
-                "description": automation.description,
-                "trigger_type": automation.trigger_type,
-                "trigger_config": automation.trigger_config if isinstance(automation.trigger_config, dict) else {},
-                "source_config": automation.source_config if isinstance(automation.source_config, dict) else {},
-                "destination_config": automation.destination_config if isinstance(automation.destination_config, dict) else {},
-                "notification_config": automation.notification_config if isinstance(automation.notification_config, dict) else {},
-                "review_mode": automation.review_mode,
-                "autonomy_mode": automation.autonomy_mode,
+                "name": agentic_task.name,
+                "description": agentic_task.description,
+                "schedule_enabled": agentic_task.schedule_enabled,
+                "schedule_config": agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {},
+                "review_mode": agentic_task.review_mode,
+                "autonomy_mode": agentic_task.autonomy_mode,
             }
         )
     return normalize_workflow_instructions(payload or {})
 
 
-def _run_automation_id(run: AgentRun) -> str | None:
-    if run.automation_id:
-        return str(run.automation_id)
+def _run_agentic_task_id(run: AgentRun) -> str | None:
+    if run.agentic_task_id:
+        return str(run.agentic_task_id)
     metadata = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
-    value = str(metadata.get("automation_id") or metadata.get("automationId") or "").strip()
+    value = str(metadata.get("agentic_task_id") or metadata.get("agenticTaskId") or "").strip()
     return value or None
 
 
-def _run_automation_name(run: AgentRun) -> str:
-    automation_name = getattr(getattr(run, "automation", None), "name", "") or ""
-    if automation_name:
-        return automation_name
+def _run_agentic_task_name(run: AgentRun) -> str:
+    agentic_task_name = getattr(getattr(run, "agentic_task", None), "name", "") or ""
+    if agentic_task_name:
+        return agentic_task_name
     snapshot = run.run_snapshot if isinstance(getattr(run, "run_snapshot", None), dict) else {}
     return str(snapshot.get("name") or snapshot.get("task") or "").strip()
 
@@ -138,8 +134,8 @@ def _run_automation_name(run: AgentRun) -> str:
 def _serialize_run_summary(run: AgentRun) -> dict[str, object]:
     return {
         "id": str(run.id),
-        "automationId": _run_automation_id(run),
-        "automationName": _run_automation_name(run),
+        "agenticTaskId": _run_agentic_task_id(run),
+        "agenticTaskName": _run_agentic_task_name(run),
         "title": run.title or "",
         "source": run.source,
         "status": run.status,
@@ -160,7 +156,7 @@ def _serialize_checkpoint(checkpoint: AgentRunCheckpoint | None) -> dict[str, ob
         return None
     return {
         "id": str(checkpoint.id),
-        "automationId": str(checkpoint.automation_id) if checkpoint.automation_id else None,
+        "agenticTaskId": str(checkpoint.agentic_task_id) if checkpoint.agentic_task_id else None,
         "runId": str(checkpoint.run_id),
         "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
         "conversationId": str(checkpoint.conversation_id) if checkpoint.conversation_id else None,
@@ -212,39 +208,36 @@ def _serialize_custom_assistant(assistant: CustomAssistant) -> dict[str, object]
     }
 
 
-def _serialize_automation(automation: Automation, latest_run: AgentRun | None = None) -> dict[str, object]:
-    open_checkpoint = getattr(automation, "open_checkpoint", None)
+def _serialize_agentic_task(agentic_task: AgenticTask, latest_run: AgentRun | None = None) -> dict[str, object]:
+    open_checkpoint = getattr(agentic_task, "open_checkpoint", None)
     return {
-        "id": str(automation.id),
-        "agentId": str(automation.agent_profile_id),
-        "agentName": getattr(getattr(automation, "agent_profile", None), "name", "") or "",
-        "businessId": str(automation.business_profile_id),
-        "conversationId": str(automation.conversation_id) if automation.conversation_id else None,
-        "name": automation.name,
-        "description": automation.description or "",
-        "status": automation.status,
-        "visibility": automation.visibility,
-        "triggerType": automation.trigger_type,
-        "triggerConfig": automation.trigger_config if isinstance(automation.trigger_config, dict) else {},
-        "sourceConfig": automation.source_config if isinstance(automation.source_config, dict) else {},
-        "destinationConfig": automation.destination_config if isinstance(automation.destination_config, dict) else {},
-        "notificationConfig": automation.notification_config if isinstance(automation.notification_config, dict) else {},
-        "reviewMode": automation.review_mode,
-        "autonomyMode": automation.autonomy_mode,
-        "instructions": automation.instructions if isinstance(automation.instructions, dict) else {},
-        "state": automation.state if isinstance(automation.state, dict) else {},
-        "lastTriggeredAt": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
-        "nextTriggerAt": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
-        "leaseExpiresAt": automation.lease_expires_at.isoformat() if automation.lease_expires_at else None,
-        "errorCount": int(automation.error_count or 0),
-        "lastError": automation.last_error or "",
+        "id": str(agentic_task.id),
+        "agentId": str(agentic_task.agent_profile_id),
+        "agentName": getattr(getattr(agentic_task, "agent_profile", None), "name", "") or "",
+        "businessId": str(agentic_task.business_profile_id),
+        "activeConversationId": str(agentic_task.active_conversation_id) if agentic_task.active_conversation_id else None,
+        "name": agentic_task.name,
+        "description": agentic_task.description or "",
+        "status": agentic_task.status,
+        "visibility": agentic_task.visibility,
+        "scheduleEnabled": bool(agentic_task.schedule_enabled),
+        "scheduleConfig": agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {},
+        "reviewMode": agentic_task.review_mode,
+        "autonomyMode": agentic_task.autonomy_mode,
+        "instructions": agentic_task.instructions if isinstance(agentic_task.instructions, dict) else {},
+        "state": agentic_task.state if isinstance(agentic_task.state, dict) else {},
+        "lastTriggeredAt": agentic_task.last_triggered_at.isoformat() if agentic_task.last_triggered_at else None,
+        "nextTriggerAt": agentic_task.next_trigger_at.isoformat() if agentic_task.next_trigger_at else None,
+        "leaseExpiresAt": agentic_task.lease_expires_at.isoformat() if agentic_task.lease_expires_at else None,
+        "errorCount": int(agentic_task.error_count or 0),
+        "lastError": agentic_task.last_error or "",
         "latestRun": _serialize_run_summary(latest_run) if latest_run is not None else None,
         "openCheckpoint": _serialize_checkpoint(open_checkpoint) if isinstance(open_checkpoint, AgentRunCheckpoint) else None,
-        "attentionState": "needs_attention" if isinstance(open_checkpoint, AgentRunCheckpoint) else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else automation.status),
-        "metadata": automation.metadata if isinstance(automation.metadata, dict) else {},
-        "createdBy": str(automation.created_by_id) if automation.created_by_id else None,
-        "createdAt": automation.created_at.isoformat() if automation.created_at else None,
-        "updatedAt": automation.updated_at.isoformat() if automation.updated_at else None,
+        "attentionState": "needs_attention" if isinstance(open_checkpoint, AgentRunCheckpoint) else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else agentic_task.status),
+        "metadata": agentic_task.metadata if isinstance(agentic_task.metadata, dict) else {},
+        "createdBy": str(agentic_task.created_by_id) if agentic_task.created_by_id else None,
+        "createdAt": agentic_task.created_at.isoformat() if agentic_task.created_at else None,
+        "updatedAt": agentic_task.updated_at.isoformat() if agentic_task.updated_at else None,
     }
 
 
@@ -270,8 +263,8 @@ def _serialize_run(run: AgentRun) -> dict[str, object]:
         "agentId": str(run.agent_profile_id),
         "businessId": str(run.business_profile_id),
         "conversationId": str(run.conversation_id) if run.conversation_id else None,
-        "automationId": _run_automation_id(run),
-        "automationName": _run_automation_name(run),
+        "agenticTaskId": _run_agentic_task_id(run),
+        "agenticTaskName": _run_agentic_task_name(run),
         "parentRunId": str(run.parent_run_id) if run.parent_run_id else None,
         "delegatedByAgentId": str(run.delegated_by_agent_id) if run.delegated_by_agent_id else None,
         "title": run.title or "",
@@ -327,7 +320,7 @@ def _serialize_memory(item: MemoryItem) -> dict[str, object]:
         "scope": item.scope,
         "agentId": str(item.agent_profile_id) if item.agent_profile_id else None,
         "customAssistantId": str(item.custom_assistant_id) if item.custom_assistant_id else None,
-        "automationId": str(item.automation_id) if item.automation_id else None,
+        "agenticTaskId": str(item.agentic_task_id) if item.agentic_task_id else None,
         "runId": str(item.run_id) if item.run_id else None,
         "conversationId": str(item.conversation_id) if item.conversation_id else None,
         "crmContactId": str(item.crm_contact_id) if item.crm_contact_id else None,
@@ -398,7 +391,7 @@ def _create_run(
     *,
     agent: AgentProfile,
     created_by,
-    automation: Automation | None,
+    agentic_task: AgenticTask | None,
     conversation: Conversation | None,
     title: str,
     source: str,
@@ -412,8 +405,9 @@ def _create_run(
         business_profile=agent.business_profile,
         agent_profile=agent,
         conversation=conversation,
+        execution_conversation=conversation if agentic_task is not None else None,
         created_by=created_by,
-        automation=automation,
+        agentic_task=agentic_task,
         parent_run=parent_run,
         delegated_by_agent=delegated_by_agent,
         run_snapshot=snapshot,
@@ -429,7 +423,7 @@ def _create_run(
         stream=AgentRunEventStream.SYSTEM,
         event_type=AgentRunEventType.PROGRESS,
         label="Queued",
-        payload={"status": AgentRunStatus.QUEUED, "automation_id": str(automation.id) if automation else None},
+        payload={"status": AgentRunStatus.QUEUED, "agentic_task_id": str(agentic_task.id) if agentic_task else None},
     )
     return run
 
@@ -523,7 +517,7 @@ def _source_conversation_brief(conversation: Conversation | None) -> dict[str, o
     }
 
 
-def _cancel_open_automation_runs(automation: Automation, *, reason: str, action: str = "pause") -> int:
+def _cancel_open_agentic_task_runs(agentic_task: AgenticTask, *, reason: str, action: str = "pause") -> int:
     open_statuses = [
         AgentRunStatus.QUEUED,
         AgentRunStatus.RUNNING,
@@ -532,7 +526,7 @@ def _cancel_open_automation_runs(automation: Automation, *, reason: str, action:
         AgentRunStatus.WAITING_EXTERNAL,
         AgentRunStatus.PAUSED,
     ]
-    runs = list(AgentRun.objects.filter(automation=automation, status__in=open_statuses).only("id", "metadata")[:200])
+    runs = list(AgentRun.objects.filter(agentic_task=agentic_task, status__in=open_statuses).only("id", "metadata")[:200])
     now = timezone.now()
     cancelled = 0
     for run in runs:
@@ -540,16 +534,16 @@ def _cancel_open_automation_runs(automation: Automation, *, reason: str, action:
             run.id,
             stream=AgentRunEventStream.SYSTEM,
             event_type=AgentRunEventType.CANCELLED,
-            label="Cancelled by automation deletion" if action == "delete" else "Cancelled by automation pause",
-            payload={"reason": reason, "automation_id": str(automation.id)},
+            label="Cancelled by Agentic Task archive" if action == "delete" else "Cancelled by Agentic Task pause",
+            payload={"reason": reason, "agentic_task_id": str(agentic_task.id)},
         )
         meta = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
         next_meta = dict(meta)
-        next_meta["cancelled_by_automation"] = action
+        next_meta["cancelled_by_agentic_task"] = action
         if action == "pause":
-            next_meta["cancelled_by_automation_pause"] = True
+            next_meta["cancelled_by_agentic_task_pause"] = True
         elif action == "delete":
-            next_meta["cancelled_by_automation_delete"] = True
+            next_meta["cancelled_by_agentic_task_delete"] = True
         AgentRun.objects.filter(id=run.id).update(
             status=AgentRunStatus.CANCELLED,
             finished_at=now,
@@ -563,17 +557,10 @@ def _cancel_open_automation_runs(automation: Automation, *, reason: str, action:
     return cancelled
 
 
-def _normalize_trigger_type(value: object) -> str:
-    raw = str(value or "").strip().lower()
-    if raw == "cron":
-        return AutomationTriggerType.SCHEDULE
-    return raw
-
-
-def _compute_next_trigger(trigger_config: dict[str, Any], *, after=None):
-    cron_config = dict(trigger_config)
+def _compute_next_schedule(schedule_config: dict[str, Any], *, after=None):
+    cron_config = dict(schedule_config)
     cron_config.setdefault("type", "cron")
-    return compute_next_automation_schedule_at("cron", cron_config, after=after or timezone.now())
+    return compute_next_agentic_task_schedule_at("cron", cron_config, after=after or timezone.now())
 
 
 __all__ = [name for name in globals() if not name.startswith("__")]

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from apps.api.agents.automations import (
-    automation_detail,
-    automation_run,
-    automations_collection,
+from apps.api.agents.agentic_tasks import (
+    agentic_task_detail,
+    agentic_task_run,
+    agentic_tasks_collection,
 )
 from apps.api.agents.custom_assistants import (
     custom_assistant_detail,

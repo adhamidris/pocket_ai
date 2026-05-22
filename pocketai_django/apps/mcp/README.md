@@ -116,7 +116,7 @@ Workflow tools:
 - Email connectors: `email_search`, `email_get_message`, `email_get_thread`,
   `email_create_draft`, `email_send_draft`
 - Voice: `initiate_phone_call` (dev-only)
-- Background runs: `start_agent_run`, `list_agent_runs`, `get_agent_run`, `continue_agent_run`
+- Sub-agent runs: `start_agent_run`, `list_agent_runs`, `get_agent_run`, `continue_agent_run`
 - MCP gateway: `mcp_search_tools`, `mcp_call_tool`
 - Portal output (deprecated): `portal_emit_blocks` (disabled for portal turns; portal streams **server-built blocks**)
 - Input control: `request_user_input`

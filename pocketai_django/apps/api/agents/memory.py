@@ -13,7 +13,7 @@ def memory_collection(request: HttpRequest) -> JsonResponse:
     business_id, err = _parse_uuid(request.GET.get("businessId") or request.GET.get("business_id"), field="businessId")
     if err:
         return err
-    qs = MemoryItem.objects.select_related("business_profile", "agent_profile", "custom_assistant", "automation", "run", "conversation")
+    qs = MemoryItem.objects.select_related("business_profile", "agent_profile", "custom_assistant", "agentic_task", "run", "conversation")
     if business_id:
         qs = qs.filter(business_profile_id=business_id)
     else:

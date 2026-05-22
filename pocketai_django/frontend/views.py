@@ -262,7 +262,8 @@ def _build_portal_context(
             "run_approval": reverse("api:chat-portal-runs-approval"),
             "run_user_input": reverse("api:chat-portal-runs-user-input"),
             "run_checkpoint": reverse("api:chat-portal-runs-checkpoint"),
-            "automation_run": reverse("api:chat-portal-automations-run"),
+            "agentic_task_approval": reverse("api:chat-portal-agentic-tasks-approval"),
+            "agentic_task_run": reverse("api:chat-portal-agentic-tasks-run"),
             "agent_request_update": reverse("api:chat-portal-agent-requests-update"),
             "email_send_draft": reverse("api:chat-portal-email-send-draft"),
             "email_discard_draft": reverse("api:chat-portal-email-discard-draft"),
@@ -913,7 +914,7 @@ def landing(request: HttpRequest) -> HttpResponse:
                 ),
                 "bullets": [
                     {"icon": "check-circle-2", "label": _("Customizable personas and tone")},
-                    {"icon": "zap", "label": _("Actionable automations and tools")},
+                    {"icon": "zap", "label": _("Actionable tasks and tools")},
                     {"icon": "clock", "label": _("24/7 availability across timezones")},
                     {"icon": "shield", "label": _("Modern, fine-tuned LLM models")},
                 ],
@@ -937,7 +938,7 @@ def landing(request: HttpRequest) -> HttpResponse:
                 "key": "crm",
                 "label": _("Flexible CRM"),
                 "icon": "layers",
-                "title": _("Build the CRM your automations deserve"),
+                "title": _("Build the CRM your assistants deserve"),
                 "promo": _(
                     "Compose a flexible CRM—add or remove tabs, define data parameters to collect, track customer profiles, and manage insights your way."
                 ),
@@ -954,7 +955,7 @@ def landing(request: HttpRequest) -> HttpResponse:
                 "icon": "link",
                 "title": _("Connect your stack in minutes"),
                 "promo": _(
-                    "Plug into tools your team already uses — CRM, support, messaging, and automation platforms."
+                    "Plug into tools your team already uses — CRM, support, messaging, and agentic_task platforms."
                 ),
                 "bullets": [],
             },
@@ -1096,13 +1097,13 @@ def landing(request: HttpRequest) -> HttpResponse:
             {
                 "tier": _("Pro"),
                 "badge": _("Users' Choice"),
-                "description": _("For SMBs — custom assistants and advanced automations."),
+                "description": _("For SMBs — custom assistants and advanced Agentic Tasks."),
                 "monthly": 89,
                 "yearly": 69,
                 "features": [
-                    _("Default assistant + custom automation assistants"),
+                    _("Default assistant + Custom Assistants"),
                     _("Advanced knowledge base + citations"),
-                    _("Automations and tools (actions)"),
+                    _("Agentic Tasks and tools (actions)"),
                     _("CRM profiles + segments"),
                     _("Reports & scheduled alerts"),
                 ],
@@ -1189,7 +1190,7 @@ def landing(request: HttpRequest) -> HttpResponse:
             {
                 "question": _("Can I customize tone and behavior?"),
                 "answer": _(
-                    "Yes. Configure personas, guardrails, tools, and automations per agent, then test in a live sandbox."
+                    "Yes. Configure personas, guardrails, tools, and Agentic Tasks per agent, then test in a live sandbox."
                 ),
             },
             {
@@ -1339,7 +1340,7 @@ def register(request: HttpRequest) -> HttpResponse:
         ],
         "SaaS": [
             "CRM",
-            "Marketing Automation",
+            "Marketing AgenticTask",
             "Analytics",
             "Project Management",
             "Customer Support",
@@ -2219,7 +2220,7 @@ def dashboard_custom_assistants(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
-def dashboard_automations(request: HttpRequest) -> HttpResponse:
+def dashboard_agentic_tasks(request: HttpRequest) -> HttpResponse:
     user_name = _current_user_name(request)
     business, agent = _default_business_assistant_for_user(request.user)
     get_token(request)
@@ -2230,7 +2231,7 @@ def dashboard_automations(request: HttpRequest) -> HttpResponse:
         "default_agent_name": agent.name if agent else "",
         "assistant_notice": None if agent else _("Complete onboarding to create the default Business Assistant first."),
     }
-    return render(request, "frontend/automations.html", context)
+    return render(request, "frontend/agentic_tasks.html", context)
 
 @login_required
 def dashboard_connectors(request: HttpRequest) -> HttpResponse:

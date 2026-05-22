@@ -370,7 +370,7 @@ INSTALLED_APPS = [
     "apps.crm",
     "apps.agent_runs.apps.AgentRunsConfig",
     "apps.assistants.apps.AssistantsConfig",
-    "apps.automations.apps.AutomationsConfig",
+    "apps.agentic_tasks.apps.AgenticTasksConfig",
     "apps.conversations.apps.ConversationsConfig",
     "apps.integrations.apps.IntegrationsConfig",
     "apps.knowledge.apps.KnowledgeConfig",

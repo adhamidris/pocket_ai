@@ -21,7 +21,7 @@ def serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | N
         return None
     return {
         "id": str(checkpoint.id),
-        "automationId": str(checkpoint.automation_id) if checkpoint.automation_id else None,
+        "agenticTaskId": str(checkpoint.agentic_task_id) if checkpoint.agentic_task_id else None,
         "runId": str(checkpoint.run_id),
         "childRunId": str(checkpoint.child_run_id) if checkpoint.child_run_id else None,
         "kind": checkpoint.kind,
@@ -72,8 +72,8 @@ def serialize_agent_run_for_portal(run: AgentRun) -> dict[str, object]:
 
     return {
         "id": str(run.id),
-        "automationId": str(run.automation_id) if run.automation_id else None,
-        "automationName": str(getattr(getattr(run, "automation", None), "name", "") or ""),
+        "agenticTaskId": str(run.agentic_task_id) if run.agentic_task_id else None,
+        "agenticTaskName": str(getattr(getattr(run, "agentic_task", None), "name", "") or ""),
         "title": run.title or "",
         "source": run.source,
         "status": run.status,

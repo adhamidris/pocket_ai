@@ -14,7 +14,8 @@ class ChatPortalClient {
       runApproval: container.getAttribute("data-endpoint-run-approval"),
       runUserInput: container.getAttribute("data-endpoint-run-user-input"),
       runCheckpoint: container.getAttribute("data-endpoint-run-checkpoint"),
-      automationRun: container.getAttribute("data-endpoint-automation-run"),
+      agenticTaskApproval: container.getAttribute("data-endpoint-agentic-task-approval"),
+      agenticTaskRun: container.getAttribute("data-endpoint-agentic-task-run"),
       agentRequestUpdate: container.getAttribute("data-endpoint-agent-request-update"),
       emailSendDraft: container.getAttribute("data-endpoint-email-send-draft"),
       emailDiscardDraft: container.getAttribute("data-endpoint-email-discard-draft"),
@@ -74,7 +75,7 @@ class ChatPortalClient {
       newSessionBtn: container.querySelector("[data-new-session-btn]"),
       fileInput: container.querySelector("[data-chat-file-input]"),
       uploadButton: container.querySelector("[data-chat-upload-button]"),
-      // Activity panel (agent runs)
+      // Agentic Task panel and inline sub-agent state
       tasksPanel: container.querySelector("[data-tasks-panel]"),
       tasksList: container.querySelector("[data-tasks-list]"),
       tasksEmpty: container.querySelector("[data-tasks-empty]"),
@@ -197,6 +198,8 @@ class ChatPortalClient {
 	    this.agentRuns = new Map(); // runId -> { run, events, expanded, seenKeys, lastEventLabel }
     this.automationAgents = new Map(); // automationId -> { automation, expanded, expandedRuns }
     this.automationManualRunBusy = new Set();
+    this.selectedAgenticTaskId = "";
+    this.selectedAgenticTaskRunId = "";
     this.tasksRenderRaf = null;
     this.tasksPanelUserHidden = false;
 
@@ -1113,7 +1116,7 @@ class ChatPortalClient {
       try {
         const payload = data ? JSON.parse(data) : null;
         const label = payload && payload.label ? payload.label : "Follow-up tasks completed.";
-        this.showToast("Automation update", label);
+        this.showToast("Task update", label);
       } catch (_err) {
         // ignore
       }
@@ -1123,8 +1126,8 @@ class ChatPortalClient {
     if (eventType === "actionsError") {
       try {
         const payload = data ? JSON.parse(data) : null;
-        const message = payload && payload.error ? payload.error : "Background automation failed.";
-        this.showToast("Automation issue", message, true);
+        const message = payload && payload.error ? payload.error : "Sub-agent failed.";
+        this.showToast("Task issue", message, true);
       } catch (_err) {
         // ignore
       }
@@ -2440,6 +2443,361 @@ class ChatPortalClient {
     return wrapper;
   }
 
+  scheduleLabelForTaskApproval(task) {
+    const scheduleEnabled = Boolean(task && (task.scheduleEnabled || task.schedule_enabled));
+    if (!scheduleEnabled) return this.t("Manual only");
+    const config = task && typeof task.scheduleConfig === "object" ? task.scheduleConfig : task && typeof task.schedule_config === "object" ? task.schedule_config : {};
+    const cron = config && (config.cron || config.expression) ? String(config.cron || config.expression).trim() : "";
+    const timezone = config && config.timezone ? String(config.timezone).trim() : "";
+    return [cron || this.t("Scheduled"), timezone].filter(Boolean).join(" · ");
+  }
+
+  buildAgenticTaskApprovalCard(payload, block) {
+    const task = payload && typeof payload.agenticTask === "object" ? payload.agenticTask : payload && typeof payload.agentic_task === "object" ? payload.agentic_task : {};
+    const taskId = (payload.agenticTaskId || payload.agentic_task_id || task.id || "").toString().trim();
+    if (!taskId) return null;
+    const status = (payload.status || "pending").toString().trim().toLowerCase();
+    const blockId = block && (block.block_id || block.blockId) ? String(block.block_id || block.blockId).trim() : "";
+    const goal =
+      (task.goal || (task.instructions && typeof task.instructions === "object" ? task.instructions.goal : "") || task.description || "")
+        .toString()
+        .trim();
+
+    const card = document.createElement("div");
+    card.className = "portal-call-approval";
+    card.dataset.agenticTaskApproval = "true";
+    card.dataset.agenticTaskId = taskId;
+    card.dataset.approvalStatus = status;
+    if (blockId) card.dataset.blockId = blockId;
+
+    const row = document.createElement("div");
+    row.className = "portal-call-approval__row";
+
+    const left = document.createElement("div");
+    left.className = "portal-call-approval__left";
+
+    const icon = document.createElement("span");
+    icon.className = "portal-call-approval__icon";
+    icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>`;
+
+    const meta = document.createElement("div");
+    meta.className = "portal-call-approval__meta";
+
+    const title = document.createElement("div");
+    title.className = "portal-call-approval__title";
+    title.dataset.taskApprovalTitle = "true";
+    title.textContent = task.name || this.t("Untitled task");
+
+    const subtitle = document.createElement("div");
+    subtitle.className = "portal-call-approval__subtitle";
+    subtitle.dataset.taskApprovalSubtitle = "true";
+    subtitle.textContent = this.scheduleLabelForTaskApproval(task);
+    meta.appendChild(title);
+    meta.appendChild(subtitle);
+
+    left.appendChild(icon);
+    left.appendChild(meta);
+
+    const right = document.createElement("div");
+    right.className = "portal-call-approval__right";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "portal-call-approval__toggle";
+    toggle.dataset.callApprovalToggle = "true";
+    toggle.setAttribute("aria-label", this.t("Toggle task details"));
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.innerHTML = `<svg class="portal-call-approval__toggle-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M6.5 8.25l3.5 3.5 3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    const statusPill = document.createElement("span");
+    statusPill.className = "portal-call-approval__pill";
+    statusPill.dataset.taskApprovalStatus = "true";
+    statusPill.hidden = status !== "approved" && status !== "rejected";
+    statusPill.textContent = status === "approved" ? this.t("Approved") : status === "rejected" ? this.t("Rejected") : this.t("Needs approval");
+    statusPill.dataset.variant = status === "approved" ? "success" : status === "rejected" ? "error" : "";
+
+    const actions = document.createElement("div");
+    actions.className = "portal-call-approval__actions portal-task-approval__primary-actions";
+    actions.dataset.taskApprovalActions = "true";
+    const canAct = status !== "approved" && status !== "rejected";
+    actions.hidden = !canAct;
+    actions.setAttribute("aria-hidden", canAct ? "false" : "true");
+
+    const approve = document.createElement("button");
+    approve.type = "button";
+    approve.className = "portal-call-approval__btn portal-call-approval__btn--accept";
+    approve.dataset.taskApprovalAction = "approve";
+    approve.textContent = this.t("Approve");
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "portal-call-approval__btn";
+    edit.dataset.taskApprovalEditToggle = "true";
+    edit.textContent = this.t("Edit");
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.className = "portal-call-approval__btn portal-call-approval__btn--deny";
+    reject.dataset.taskApprovalAction = "reject";
+    reject.textContent = this.t("Reject");
+    actions.appendChild(approve);
+    actions.appendChild(edit);
+    actions.appendChild(reject);
+
+    const editActions = document.createElement("div");
+    editActions.className = "portal-call-approval__actions portal-task-approval__primary-actions";
+    editActions.dataset.taskApprovalEditActions = "true";
+    editActions.hidden = true;
+    editActions.setAttribute("aria-hidden", "true");
+    const saveApprove = document.createElement("button");
+    saveApprove.type = "button";
+    saveApprove.className = "portal-call-approval__btn portal-call-approval__btn--accept";
+    saveApprove.dataset.taskApprovalAction = "approve";
+    saveApprove.dataset.withEdits = "true";
+    saveApprove.textContent = this.t("Approve changes");
+    const cancelEdit = document.createElement("button");
+    cancelEdit.type = "button";
+    cancelEdit.className = "portal-call-approval__btn";
+    cancelEdit.dataset.taskApprovalEditCancel = "true";
+    cancelEdit.textContent = this.t("Cancel");
+    editActions.appendChild(saveApprove);
+    editActions.appendChild(cancelEdit);
+
+    right.appendChild(statusPill);
+    right.appendChild(actions);
+    right.appendChild(editActions);
+    right.appendChild(toggle);
+    row.appendChild(left);
+    row.appendChild(right);
+    card.appendChild(row);
+
+    const details = document.createElement("div");
+    details.className = "portal-call-approval__details";
+    details.dataset.callApprovalDetails = "true";
+    details.hidden = true;
+    details.setAttribute("aria-hidden", "true");
+
+    const kv = document.createElement("div");
+    kv.className = "portal-call-approval__kv";
+    const detailRow = (label, value, key) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "portal-call-approval__kv-row";
+      const keyEl = document.createElement("div");
+      keyEl.className = "portal-call-approval__kv-key";
+      keyEl.textContent = label;
+      const valueEl = document.createElement("div");
+      valueEl.className = "portal-call-approval__kv-val";
+      if (key) valueEl.dataset.taskApprovalDetailValue = key;
+      valueEl.textContent = value || "-";
+      rowEl.appendChild(keyEl);
+      rowEl.appendChild(valueEl);
+      return rowEl;
+    };
+    kv.appendChild(detailRow(this.t("Goal"), goal, "goal"));
+    kv.appendChild(detailRow(this.t("Schedule"), this.scheduleLabelForTaskApproval(task), "schedule"));
+    kv.appendChild(detailRow(this.t("Visibility"), (task.visibility || "initiator").toString(), "visibility"));
+    details.appendChild(kv);
+
+    const editBox = document.createElement("div");
+    editBox.className = "portal-task-approval__edit";
+    editBox.dataset.taskApprovalEdit = "true";
+    editBox.hidden = true;
+    const nameInput = document.createElement("input");
+    nameInput.className = "portal-task-approval__input";
+    nameInput.dataset.taskApprovalName = "true";
+    nameInput.value = task.name || "";
+    const goalInput = document.createElement("textarea");
+    goalInput.className = "portal-task-approval__textarea";
+    goalInput.dataset.taskApprovalGoal = "true";
+    goalInput.value = goal;
+    const cronInput = document.createElement("input");
+    cronInput.className = "portal-task-approval__input";
+    cronInput.dataset.taskApprovalCron = "true";
+    const scheduleConfig =
+      task && typeof task.scheduleConfig === "object"
+        ? task.scheduleConfig
+        : task && typeof task.schedule_config === "object"
+          ? task.schedule_config
+          : {};
+    cronInput.value = scheduleConfig && scheduleConfig.cron ? scheduleConfig.cron : "";
+    cronInput.placeholder = this.t("Cron expression, or leave blank for manual only");
+    editBox.appendChild(nameInput);
+    editBox.appendChild(goalInput);
+    editBox.appendChild(cronInput);
+    details.appendChild(editBox);
+    card.appendChild(details);
+
+    toggle.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const wasOpen = card.dataset.callApprovalDetailsOpen === "true";
+      this.toggleCallApprovalDetails(card);
+      if (wasOpen && card.dataset.taskApprovalEditMode === "true") {
+        this.setAgenticTaskApprovalEditMode(card, false);
+      }
+    });
+    edit.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.setAgenticTaskApprovalEditMode(card, true);
+    });
+    cancelEdit.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.setAgenticTaskApprovalEditMode(card, false);
+    });
+    card.addEventListener("click", (event) => {
+      const button = event.target && event.target.closest ? event.target.closest("[data-task-approval-action]") : null;
+      if (!button) return;
+      event.preventDefault();
+      const action = (button.dataset.taskApprovalAction || "").toString();
+      void this.submitAgenticTaskApproval(card, action, button);
+    });
+
+    return card;
+  }
+
+  collectAgenticTaskApprovalEdits(card) {
+    const name = card.querySelector("[data-task-approval-name]")?.value || "";
+    const goal = card.querySelector("[data-task-approval-goal]")?.value || "";
+    const cron = card.querySelector("[data-task-approval-cron]")?.value || "";
+    const edits = {
+      name: name.trim(),
+      goal: goal.trim(),
+      scheduleEnabled: Boolean(cron.trim()),
+      scheduleConfig: cron.trim() ? { type: "cron", cron: cron.trim() } : {},
+    };
+    return edits;
+  }
+
+  setAgenticTaskApprovalEditMode(card, editing) {
+    if (!card) return;
+    const isEditing = Boolean(editing);
+    const normalized = (card.dataset.approvalStatus || "pending").toString().trim().toLowerCase();
+    const canAct = normalized !== "approved" && normalized !== "rejected";
+    const actions = card.querySelector("[data-task-approval-actions]");
+    const editActions = card.querySelector("[data-task-approval-edit-actions]");
+    const editBox = card.querySelector("[data-task-approval-edit]");
+    const detailsKv = card.querySelector(".portal-call-approval__kv");
+    card.dataset.taskApprovalEditMode = isEditing ? "true" : "false";
+    if (actions) {
+      actions.hidden = isEditing || !canAct;
+      actions.setAttribute("aria-hidden", actions.hidden ? "true" : "false");
+    }
+    if (editActions) {
+      editActions.hidden = !isEditing || !canAct;
+      editActions.setAttribute("aria-hidden", editActions.hidden ? "true" : "false");
+    }
+    if (detailsKv) {
+      detailsKv.hidden = isEditing;
+      detailsKv.setAttribute("aria-hidden", isEditing ? "true" : "false");
+    }
+    if (editBox) {
+      editBox.hidden = !isEditing || !canAct;
+      editBox.setAttribute("aria-hidden", isEditing && canAct ? "false" : "true");
+    }
+    if (isEditing) {
+      this.setCallApprovalDetailsOpen(card, true, { userAction: true });
+      const firstInput = card.querySelector("[data-task-approval-name]");
+      if (firstInput && typeof firstInput.focus === "function") {
+        firstInput.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  async submitAgenticTaskApproval(card, action, buttonEl) {
+    const taskId = (card?.dataset?.agenticTaskId || "").toString().trim();
+    if (!taskId || !action) return;
+    if (!this.endpoints.agenticTaskApproval) {
+      this.showToast(this.t("Approval unavailable"), this.t("Agentic Task approval endpoint is not configured."), true);
+      return;
+    }
+    const messageEl = card.closest("[data-message-id]");
+    const messageId = (messageEl?.dataset?.messageId || "").toString().trim();
+    const blockId = (card.dataset.blockId || "").toString().trim();
+    const includeEdits = action === "edit" || buttonEl?.dataset?.withEdits === "true";
+    if (buttonEl) {
+      buttonEl.disabled = true;
+      buttonEl.dataset.busy = "true";
+    }
+    try {
+      const response = await fetch(this.endpoints.agenticTaskApproval, {
+        method: "POST",
+        headers: this.jsonHeaders(),
+        body: JSON.stringify(
+          this.getCurrentReferencePayload({
+            agenticTaskId: taskId,
+            action,
+            messageId,
+            blockId,
+            ...(includeEdits ? { edits: this.collectAgenticTaskApprovalEdits(card) } : {}),
+          }),
+        ),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && payload.error && payload.error.message ? payload.error.message : this.t("Agentic Task approval failed.");
+        throw new Error(message);
+      }
+      const nextStatus = (payload && payload.status ? payload.status : action === "approve" ? "approved" : action === "reject" ? "rejected" : "pending").toString();
+      const task = payload && payload.agenticTask && typeof payload.agenticTask === "object" ? payload.agenticTask : null;
+      this.updateAgenticTaskApprovalCard(card, nextStatus, task);
+      this.setAgenticTaskApprovalEditMode(card, false);
+      if (task && nextStatus !== "rejected") {
+        this.upsertAutomation(task);
+      }
+      if (nextStatus === "approved" && !this.tasksPanelUserHidden) {
+        this.setTasksPanelVisible(true);
+      }
+      this.scheduleTasksRender();
+    } catch (error) {
+      console.warn("Agentic Task approval failed", error);
+      this.showToast(this.t("Approval failed"), error && error.message ? error.message : this.t("Please try again."), true);
+    } finally {
+      if (buttonEl) {
+        buttonEl.disabled = false;
+        delete buttonEl.dataset.busy;
+      }
+    }
+  }
+
+  updateAgenticTaskApprovalCard(card, status, task) {
+    if (!card) return;
+    const normalized = (status || "pending").toString().trim().toLowerCase();
+    card.dataset.approvalStatus = normalized;
+    const title = card.querySelector("[data-task-approval-title]");
+    if (title && task && task.name) title.textContent = task.name;
+    const subtitle = card.querySelector("[data-task-approval-subtitle]");
+    if (subtitle && task) subtitle.textContent = this.scheduleLabelForTaskApproval(task);
+    const detailGoal = card.querySelector('[data-task-approval-detail-value="goal"]');
+    const detailSchedule = card.querySelector('[data-task-approval-detail-value="schedule"]');
+    const detailVisibility = card.querySelector('[data-task-approval-detail-value="visibility"]');
+    if (task) {
+      const goal =
+        (task.goal || (task.instructions && typeof task.instructions === "object" ? task.instructions.goal : "") || task.description || "")
+          .toString()
+          .trim();
+      if (detailGoal) detailGoal.textContent = goal || "-";
+      if (detailSchedule) detailSchedule.textContent = this.scheduleLabelForTaskApproval(task) || "-";
+      if (detailVisibility) detailVisibility.textContent = (task.visibility || "initiator").toString();
+      const nameInput = card.querySelector("[data-task-approval-name]");
+      const goalInput = card.querySelector("[data-task-approval-goal]");
+      const cronInput = card.querySelector("[data-task-approval-cron]");
+      const scheduleConfig =
+        task && typeof task.scheduleConfig === "object"
+          ? task.scheduleConfig
+          : task && typeof task.schedule_config === "object"
+            ? task.schedule_config
+            : {};
+      if (nameInput && task.name) nameInput.value = task.name;
+      if (goalInput) goalInput.value = goal;
+      if (cronInput) cronInput.value = scheduleConfig && scheduleConfig.cron ? scheduleConfig.cron : "";
+    }
+    const pill = card.querySelector("[data-task-approval-status]");
+    if (pill) {
+      pill.textContent = normalized === "approved" ? this.t("Approved") : normalized === "rejected" ? this.t("Rejected") : this.t("Needs approval");
+      pill.dataset.variant = normalized === "approved" ? "success" : normalized === "rejected" ? "error" : "";
+      pill.hidden = normalized !== "approved" && normalized !== "rejected";
+    }
+    this.setAgenticTaskApprovalEditMode(card, false);
+  }
+
   handleTurnUpdatedEvent(data) {
     let payload = null;
     try {
@@ -2857,6 +3215,12 @@ class ChatPortalClient {
 
     clarification.appendChild(clarificationMore);
     card.appendChild(clarification);
+
+    const taskApprovalOutput = document.createElement("div");
+    taskApprovalOutput.dataset.agenticTaskToolOutput = "true";
+    taskApprovalOutput.hidden = true;
+    card.appendChild(taskApprovalOutput);
+
     this.attachToolCardEvents(card);
     return card;
   }
@@ -3908,6 +4272,8 @@ class ChatPortalClient {
     }
     if (outputProvided) {
       card._toolRawOutput = payload.output;
+    } else if (payload.output_preview || payload.outputPreview) {
+      card._toolRawOutput = payload.output_preview || payload.outputPreview;
     }
 
     const hasStoredInput = typeof card._toolRawInput !== "undefined";
@@ -3920,6 +4286,7 @@ class ChatPortalClient {
     this.updateToolPanel(card, "output", outputPayload, { available: outputProvided || hasStoredOutput, pending: isRunning });
     this.renderToolScopeClarification(card, payload);
     this.updateToolApprovalPanel(card, payload);
+    this.updateAgenticTaskToolOutput(card, payload);
 
     if (!card.dataset.toolTabUser) {
       const preferredTab = (outputProvided || hasStoredOutput) && !isRunning ? "output" : "input";
@@ -4009,6 +4376,52 @@ class ChatPortalClient {
       denyBtn.classList.toggle("opacity-50", !isPending);
       denyBtn.classList.toggle("cursor-not-allowed", !isPending);
     }
+  }
+
+  agenticTaskApprovalPayloadFromToolPayload(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const toolName = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
+    if (toolName !== "draft_agentic_task") return null;
+    const output =
+      payload.output && typeof payload.output === "object"
+        ? payload.output
+        : payload.output_preview && typeof payload.output_preview === "object"
+          ? payload.output_preview
+          : payload.outputPreview && typeof payload.outputPreview === "object"
+            ? payload.outputPreview
+            : null;
+    if (!output) return null;
+    const task = output.agenticTask && typeof output.agenticTask === "object" ? output.agenticTask : output.agentic_task;
+    if (!task || typeof task !== "object" || !task.id) return null;
+    const status =
+      (output.approvalStatus || output.approval_status || (output.activated ? "approved" : "") || "")
+        .toString()
+        .trim()
+        .toLowerCase() || "pending";
+    return {
+      status,
+      agenticTaskId: String(task.id),
+      agenticTask: task,
+    };
+  }
+
+  updateAgenticTaskToolOutput(card, payload) {
+    if (!card) return;
+    const wrap = card.querySelector("[data-agentic-task-tool-output]");
+    if (!wrap) return;
+    const approvalPayload = this.agenticTaskApprovalPayloadFromToolPayload(payload);
+    if (!approvalPayload) {
+      wrap.hidden = true;
+      wrap.innerHTML = "";
+      return;
+    }
+    wrap.hidden = false;
+    wrap.innerHTML = "";
+    const blockId = (card.dataset.blockId || "").toString().trim();
+    const approvalCard = this.buildAgenticTaskApprovalCard(approvalPayload, blockId ? { block_id: blockId } : null);
+    if (!approvalCard) return;
+    approvalCard.dataset.toolEventId = card.dataset.toolEventId || "";
+    wrap.appendChild(approvalCard);
   }
 
   async submitToolApproval(approvalId, decision, card) {
@@ -5682,10 +6095,34 @@ class ChatPortalClient {
         return;
       }
 
+      const taskThreadBackBtn = target.closest("[data-task-thread-back]");
+      if (taskThreadBackBtn) {
+        this.selectedAgenticTaskId = "";
+        this.selectedAgenticTaskRunId = "";
+        this.scheduleTasksRender();
+        return;
+      }
+
+      const taskThreadSendBtn = target.closest("[data-task-thread-send]");
+      if (taskThreadSendBtn) {
+        const automationId = (taskThreadSendBtn.getAttribute("data-task-thread-send") || "").trim();
+        const card = taskThreadSendBtn.closest("[data-task-thread-id]");
+        const textarea = card ? card.querySelector("[data-task-thread-input]") : null;
+        const message = textarea && typeof textarea.value === "string" ? textarea.value.trim() : "";
+        if (!message) {
+          this.showToast(this.t("Missing message"), this.t("Write a message for this task first."), true);
+          return;
+        }
+        if (automationId) this.submitAutomationManualRun(automationId, taskThreadSendBtn, card, { message, textarea });
+        return;
+      }
+
       const automationToggleEl = target.closest("[data-automation-toggle]");
       if (automationToggleEl) {
         const automationId = (automationToggleEl.getAttribute("data-automation-toggle") || "").trim();
-        if (automationId) this.toggleAutomationExpanded(automationId);
+        if (automationId) {
+          this.toggleAutomationExpanded(automationId);
+        }
         return;
       }
 
@@ -5693,7 +6130,13 @@ class ChatPortalClient {
       if (automationRunToggleEl) {
         const automationId = (automationRunToggleEl.getAttribute("data-automation-id") || "").trim();
         const runId = (automationRunToggleEl.getAttribute("data-run-id") || "").trim();
-        if (automationId && runId) this.toggleAutomationRunExpanded(automationId, runId);
+        if (automationId && runId) {
+          this.selectedAgenticTaskId = automationId;
+          this.selectedAgenticTaskRunId = runId;
+          const state = this.automationAgents.get(automationId);
+          if (state) state.expanded = true;
+          this.scheduleTasksRender();
+        }
         return;
       }
 
@@ -5811,11 +6254,11 @@ class ChatPortalClient {
     return "";
   }
 
-  async submitAutomationManualRun(automationId, buttonEl, cardEl) {
+  async submitAutomationManualRun(automationId, buttonEl, cardEl, options = {}) {
     const safeAutomationId = (automationId || "").toString().trim();
     if (!safeAutomationId) return;
-    if (!this.endpoints.automationRun) {
-      this.showToast(this.t("Run unavailable"), this.t("Automation run endpoint is not configured."), true);
+    if (!this.endpoints.agenticTaskRun) {
+      this.showToast(this.t("Run unavailable"), this.t("Agentic Task run endpoint is not configured."), true);
       return;
     }
     if (!this.sessionToken) {
@@ -5831,22 +6274,23 @@ class ChatPortalClient {
     }
 
     try {
-      const response = await fetch(this.endpoints.automationRun, {
+      const response = await fetch(this.endpoints.agenticTaskRun, {
         method: "POST",
         headers: this.jsonHeaders(),
         body: JSON.stringify(
           this.getCurrentReferencePayload({
-            automation_id: safeAutomationId,
+            agenticTaskId: safeAutomationId,
+            ...(options && options.message ? { message: String(options.message) } : {}),
           }),
         ),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        const message = payload && payload.error && payload.error.message ? payload.error.message : this.t("Automation run failed.");
+        const message = payload && payload.error && payload.error.message ? payload.error.message : this.t("Agentic Task run failed.");
         throw new Error(message);
       }
 
-      const automation = payload && payload.automation && typeof payload.automation === "object" ? payload.automation : null;
+      const automation = payload && payload.agenticTask && typeof payload.agenticTask === "object" ? payload.agenticTask : null;
       const run = payload && payload.run && typeof payload.run === "object" ? payload.run : null;
       const automationState = automation ? this.upsertAutomation(automation) : this.automationAgents.get(safeAutomationId);
       if (run) {
@@ -5866,13 +6310,18 @@ class ChatPortalClient {
         if (!(automationState.expandedRuns instanceof Set)) automationState.expandedRuns = new Set();
         if (run && run.id) automationState.expandedRuns.add(String(run.id));
       }
+      if (options && options.textarea) {
+        options.textarea.value = "";
+      }
+      this.selectedAgenticTaskId = safeAutomationId;
+      if (run && run.id) this.selectedAgenticTaskRunId = String(run.id);
       if (!this.tasksPanelUserHidden) {
         this.setTasksPanelVisible(true);
       }
-      this.showToast(this.t("Run queued"), this.t("Automation run started."), false);
+      this.showToast(this.t("Run queued"), this.t("Agentic Task run started."), false);
       this.scheduleTasksRender();
     } catch (error) {
-      console.warn("Automation manual run failed", error);
+      console.warn("Agentic Task manual run failed", error);
       this.showToast("Run failed", error.message || "Please try again.", true);
     } finally {
       this.automationManualRunBusy.delete(safeAutomationId);
@@ -6077,7 +6526,7 @@ class ChatPortalClient {
           }
         });
       }
-      this.showToast("Saved", "Automation updated.", false);
+      this.showToast("Saved", "Task updated.", false);
       this.scheduleTasksRender();
     } catch (error) {
       console.warn("Run checkpoint failed", error);
@@ -6342,9 +6791,6 @@ class ChatPortalClient {
     }
 
     let activeCount = this.getActiveRunCount();
-    if (activeCount === 0 && this.activeVoiceCalls && this.activeVoiceCalls.size > 0) {
-      activeCount = this.activeVoiceCalls.size;
-    }
     if (this.elements.tasksCount) {
       if (activeCount > 0) {
         this.elements.tasksCount.textContent = String(activeCount);
@@ -6402,13 +6848,6 @@ class ChatPortalClient {
         count += 1;
       }
     });
-    this.agentRuns.forEach((state) => {
-      const status = state && state.run ? (state.run.status || "").toString().toLowerCase() : "";
-      if (!status) return;
-      if (["running", "queued", "waiting_user", "waiting_approval", "waiting_external", "paused"].includes(status)) {
-        count += 1;
-      }
-    });
     return count;
   }
 
@@ -6462,7 +6901,7 @@ class ChatPortalClient {
   handleAgentRunsSnapshot(payload) {
     if (!payload || typeof payload !== "object") return;
     const runs = Array.isArray(payload.runs) ? payload.runs : [];
-    const automations = Array.isArray(payload.automations) ? payload.automations : [];
+    const automations = Array.isArray(payload.agenticTasks) ? payload.agenticTasks : [];
     const eventsByRun =
       payload.eventsByRun && typeof payload.eventsByRun === "object" ? payload.eventsByRun : {};
 
@@ -6484,15 +6923,15 @@ class ChatPortalClient {
       this.replaceAgentRunEvents(runId, events);
     });
 
-    if (!this.tasksPanelUserHidden) {
+    if (automations.length && !this.tasksPanelUserHidden) {
       this.setTasksPanelVisible(true);
-    } else {
+    } else if (automations.length) {
       this.updateTasksOpenButton();
     }
     if (Array.isArray(this.sessionSummaries) && this.elements.sessionsList) {
       this.renderSessionList(this.sessionSummaries);
     }
-    this.scheduleTasksRender();
+    if (automations.length) this.scheduleTasksRender();
     this.refreshAgentRunChips();
   }
 
@@ -6518,17 +6957,19 @@ class ChatPortalClient {
       "";
     if (!runId) return;
 
+    let isAgenticTaskRun = false;
     if (run) {
       const runState = this.upsertAgentRun(run);
+      isAgenticTaskRun = Boolean(run && run.agenticTaskId);
       if (runState && (this.isRunActiveStatus(run.status) || this.isRunTerminalStatus(run.status))) {
         runState.expanded = true;
       }
-      const automationId = (run.automationId || run.automation_id || "").toString().trim();
+      const automationId = (run.agenticTaskId || "").toString().trim();
       if (automationId) {
         const runAutomation = {
           id: automationId,
-          name: run.automationName || "",
-          kind: run.automationKind || run.automation_kind || "",
+          name: run.agenticTaskName || "",
+          kind: "agentic_task",
         };
         const existingAutomationState = this.automationAgents.get(automationId);
         const automationState = this.isRunnableAutomation(existingAutomationState && existingAutomationState.automation ? existingAutomationState.automation : runAutomation)
@@ -6552,20 +6993,27 @@ class ChatPortalClient {
         }
       }
     } else {
+      const existingState = this.agentRuns.get(runId);
+      isAgenticTaskRun = Boolean(existingState && existingState.run && existingState.run.agenticTaskId);
       this.upsertAgentRun({ id: runId });
     }
     if (evt) {
       this.appendAgentRunEvent(runId, evt);
     }
 
-    if (!this.tasksPanelUserHidden) {
+    if (isAgenticTaskRun && !this.tasksPanelUserHidden) {
       this.setTasksPanelVisible(true);
-    } else {
+    } else if (isAgenticTaskRun) {
       this.updateTasksOpenButton();
     }
 
-    // Route automation events to incremental card patching instead of full re-render.
-    const automationIdForPatch = run ? (run.automationId || run.automation_id || "").toString().trim() : "";
+    if (!isAgenticTaskRun) {
+      this.refreshAgentRunChips(runId);
+      return;
+    }
+
+    // Route Agentic Task events to incremental card patching instead of full re-render.
+    const automationIdForPatch = run ? (run.agenticTaskId || "").toString().trim() : "";
     if (automationIdForPatch && this.automationAgents.has(automationIdForPatch)) {
       this.scheduleAutomationCardPatch(automationIdForPatch);
     } else {
@@ -6609,13 +7057,7 @@ class ChatPortalClient {
       state.transcripts = state.transcripts.slice(-50);
     }
 
-    // Voice calling runs in the background; surface transcript updates in the Activity panel.
-    if (!this.tasksPanelUserHidden) {
-      this.setInboxPanelVisible(false);
-      this.setTasksPanelVisible(true);
-    }
     this.updateTasksOpenButton();
-    this.scheduleTasksRender();
   }
 
   upsertAgentRun(run) {
@@ -6747,6 +7189,10 @@ class ChatPortalClient {
    * and events for different automations don't block each other.
    */
   scheduleAutomationCardPatch(automationId) {
+    if (this.selectedAgenticTaskId && this.selectedAgenticTaskRunId && this.selectedAgenticTaskId === automationId) {
+      this.scheduleTasksRender();
+      return;
+    }
     if (!this._automationPatchRafs) this._automationPatchRafs = new Map();
     if (this._automationPatchRafs.has(automationId)) return;
     this._automationPatchRafs.set(automationId, requestAnimationFrame(() => {
@@ -6789,7 +7235,7 @@ class ChatPortalClient {
     // --- Update header in-place ---
     const titleRowEl = cardEl.querySelector(".portal-task__title-row");
     if (titleRowEl) {
-      const name = automation && automation.name ? String(automation.name) : this.t("Automation");
+      const name = automation && automation.name ? String(automation.name) : this.t("Agentic Task");
       titleRowEl.innerHTML = `
         <div class="portal-task__title">${this.escapeHtml(name)}</div>
         ${this.renderTaskAttentionIndicator(status)}
@@ -6799,7 +7245,7 @@ class ChatPortalClient {
 
     const subtitleEl = cardEl.querySelector(".portal-task__subtitle");
     if (subtitleEl) {
-      const triggerLabel = this.getAutomationTriggerLabel(automation.triggerType);
+      const triggerLabel = automation && automation.scheduleEnabled === false ? this.t("Manual only") : this.t("Scheduled");
       const ownerLabel = automation.agentName ? String(automation.agentName) : "";
       const subtitleParts = [ownerLabel, triggerLabel];
       if (automation.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(automation.nextTriggerAt)}`);
@@ -6941,23 +7387,7 @@ class ChatPortalClient {
       automation: state && state.automation ? state.automation : {},
     })).filter(({ automation }) => this.isRunnableAutomation(automation));
 
-    const runs = Array.from(this.agentRuns.entries())
-      .filter(([, state]) => {
-        const run = state && state.run ? state.run : {};
-        return !(run && (run.automationId || run.automation_id));
-      })
-      .map(([id, state]) => ({
-      id,
-      state,
-      run: state && state.run ? state.run : {},
-    }));
-
-    const voiceCalls = Array.from(this.activeVoiceCalls.entries()).map(([id, state]) => ({
-      id,
-      state,
-    }));
-
-    if (!automations.length && !runs.length && !voiceCalls.length) {
+    if (!automations.length) {
       if (this.elements.tasksEmpty) {
         this.elements.tasksEmpty.removeAttribute("hidden");
       }
@@ -6979,43 +7409,28 @@ class ChatPortalClient {
       return bTime - aTime;
     });
 
-    // Order ad-hoc background work chronologically (first initiated at the top).
-    runs.sort((a, b) => {
-      const aTime = Date.parse(a.run.createdAt || a.run.updatedAt || "") || 0;
-      const bTime = Date.parse(b.run.createdAt || b.run.updatedAt || "") || 0;
-      if (aTime !== bTime) return aTime - bTime;
-      const aId = (a.id || "").toString();
-      const bId = (b.id || "").toString();
-      return aId.localeCompare(bId);
-    });
+    const selectedState = this.selectedAgenticTaskId ? this.automationAgents.get(this.selectedAgenticTaskId) : null;
+    const selectedAutomation = selectedState && selectedState.automation && this.isRunnableAutomation(selectedState.automation) ? selectedState.automation : null;
+    if (this.selectedAgenticTaskId && !selectedAutomation) {
+      this.selectedAgenticTaskId = "";
+      this.selectedAgenticTaskRunId = "";
+    }
+    if (selectedAutomation && this.selectedAgenticTaskRunId) {
+      const savedStates = this._snapshotPanelDomState(list);
+      list.innerHTML = this.renderAgenticTaskThreadHtml(this.selectedAgenticTaskId, selectedState, selectedAutomation, this.selectedAgenticTaskRunId);
+      this._restorePanelDomState(list, savedStates);
+      this.updateTasksOpenButton();
+      return;
+    }
 
     const automationCardsHtml = automations
       .map(({ id, state, automation }) => this.renderAutomationCardHtml(id, state, automation))
       .join("");
 
-    const voiceSessionsInRuns = new Set();
-    const runCardsHtml = runs
-      .map(({ id, state, run }) => {
-        const voiceInfo = this.extractVoiceCallRunInfo(state, run);
-        if (voiceInfo && voiceInfo.sessionId) {
-          voiceSessionsInRuns.add(voiceInfo.sessionId);
-          return this.renderVoiceCallRunCardHtml(id, state, run, voiceInfo);
-        }
-        return this.renderRunCardHtml(id, state, run);
-      })
-      .join("");
-
-    const extraVoiceCardsHtml = voiceCalls
-      .filter(({ id }) => id && !voiceSessionsInRuns.has(id))
-      .map(({ id, state }) => this.renderVoiceCallTranscriptCardHtml(id, state))
-      .join("");
-
-    const adHocHeading = runs.length || extraVoiceCardsHtml ? `<div class="portal-task__group-title">${this.escapeHtml(this.t("Ad-hoc runs"))}</div>` : "";
-
     // Snapshot DOM state before innerHTML nuke
     const savedStates = this._snapshotPanelDomState(list);
 
-    list.innerHTML = automationCardsHtml + adHocHeading + runCardsHtml + extraVoiceCardsHtml;
+    list.innerHTML = automationCardsHtml;
 
     // Restore DOM state after innerHTML replacement
     this._restorePanelDomState(list, savedStates);
@@ -7034,9 +7449,9 @@ class ChatPortalClient {
       if (!det.open) return;
       // Build a selector path to relocate this element after re-render
       const classes = (det.className || "").trim();
-      const parent = det.closest("[data-automation-id], [data-run-id], [data-run-toggle]");
+      const parent = det.closest("[data-automation-id], [data-task-thread-id], [data-run-id], [data-run-toggle]");
       const parentId = parent
-        ? (parent.getAttribute("data-automation-id") || parent.getAttribute("data-run-id") || parent.getAttribute("data-run-toggle") || "")
+        ? (parent.getAttribute("data-automation-id") || parent.getAttribute("data-task-thread-id") || parent.getAttribute("data-run-id") || parent.getAttribute("data-run-toggle") || "")
         : "";
       const runBtn = det.closest(".portal-task__run-row") ? det.closest(".portal-task__run-row").querySelector("[data-run-id]") : null;
       const cardRun = det.closest("[data-run-id]");
@@ -7060,8 +7475,8 @@ class ChatPortalClient {
 
     container.querySelectorAll("textarea").forEach((ta) => {
       if (!ta.value) return;
-      const card = ta.closest("[data-automation-id], [data-run-toggle]");
-      const cardId = card ? (card.getAttribute("data-automation-id") || card.getAttribute("data-run-toggle") || "") : "";
+      const card = ta.closest("[data-automation-id], [data-task-thread-id], [data-run-toggle]");
+      const cardId = card ? (card.getAttribute("data-automation-id") || card.getAttribute("data-task-thread-id") || card.getAttribute("data-run-toggle") || "") : "";
       saved.textareas.push({ cardId, value: ta.value });
     });
 
@@ -7083,7 +7498,7 @@ class ChatPortalClient {
         const runBtn = container.querySelector(`[data-run-id="${entry.runId}"]`);
         if (runBtn) scope = runBtn.closest(".portal-task__run-row") || runBtn.closest(".portal-task") || container;
       } else if (entry.parentId) {
-        scope = container.querySelector(`[data-automation-id="${entry.parentId}"], [data-run-id="${entry.parentId}"]`) || container;
+        scope = container.querySelector(`[data-automation-id="${entry.parentId}"], [data-task-thread-id="${entry.parentId}"], [data-run-id="${entry.parentId}"]`) || container;
       }
       const candidates = scope.querySelectorAll(`details.${entry.classes.split(/\s+/).join(".")}`);
       candidates.forEach((det) => {
@@ -7110,7 +7525,7 @@ class ChatPortalClient {
     // Restore textarea values
     for (const entry of saved.textareas) {
       if (!entry.cardId || !entry.value) continue;
-      const card = container.querySelector(`[data-automation-id="${entry.cardId}"], [data-run-toggle="${entry.cardId}"]`);
+      const card = container.querySelector(`[data-automation-id="${entry.cardId}"], [data-task-thread-id="${entry.cardId}"], [data-run-toggle="${entry.cardId}"]`);
       if (!card) continue;
       const ta = card.querySelector("textarea");
       if (ta) ta.value = entry.value;
@@ -7461,8 +7876,8 @@ class ChatPortalClient {
   getAutomationTriggerLabel(triggerType) {
     const norm = (triggerType || "").toString().trim().toLowerCase();
     if (norm === "schedule") return this.t("Scheduled");
-    if (norm === "manual") return this.t("Manual");
-    return norm ? this.formatStatus(norm) : this.t("Automation");
+    if (norm === "manual") return this.t("Manual only");
+    return norm ? this.formatStatus(norm) : this.t("Agentic Task");
   }
 
   isRunnableAutomation(automation) {
@@ -7842,9 +8257,155 @@ class ChatPortalClient {
     `;
   }
 
+  renderTaskThreadMessagesHtml(messages) {
+    const items = Array.isArray(messages) ? messages.slice(-40) : [];
+    if (!items.length) {
+      return `<div class="portal-task-thread__empty">${this.escapeHtml(this.t("No conversation yet. Send a message to start this task session."))}</div>`;
+    }
+    return items
+      .map((message) => {
+        const sender = (message && (message.sender || "") ? String(message.sender) : "system").toLowerCase();
+        const body = message && message.body ? String(message.body) : "";
+        const isUser = sender === "customer";
+        const isAi = sender === "ai";
+        const label = isUser ? this.t("You") : isAi ? this.t("Task agent") : this.t("System");
+        const tone = isUser ? "user" : isAi ? "agent" : "system";
+        const rendered = body ? this.renderMarkdown(this.stripInlineResponseBlocks(body)) : "";
+        return `
+          <div class="portal-task-thread__message" data-sender="${this.escapeHtml(tone)}">
+            <div class="portal-task-thread__message-label">${this.escapeHtml(label)}</div>
+            <div class="portal-task-thread__bubble">${rendered || this.escapeHtml(this.t("No text content."))}</div>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  renderTaskThreadRunActivityHtml(run) {
+    if (!run || typeof run !== "object" || !run.id) return "";
+    const state = this.stateForRun(run);
+    const rows = this.buildRunActivityItems(state);
+    const resultHtml = this.renderRunResultHtml(run, state);
+    const status = run && run.status ? String(run.status) : "";
+    const isActive = this.isRunActiveStatus(status);
+    if (!rows.length && !resultHtml && !isActive) return "";
+    const rowHtml = rows
+      .map((row) => {
+        if (row.kind === "assistant") {
+          return `<div class="portal-task-thread__agent-text">${this.renderMarkdown(row.text)}</div>`;
+        }
+        if (row.kind === "tool") {
+          const statusLabel = row.status && row.status !== "ok" ? `<span class="portal-task__tool-status">${this.escapeHtml(this.formatStatus(row.status))}</span>` : "";
+          return `
+            <details class="portal-task__tool-call">
+              <summary>
+                <span class="portal-task__tool-icon" aria-hidden="true">${this.getToolCallIconMarkup()}</span>
+                <span class="portal-task__tool-name">${this.escapeHtml(row.title)}</span>
+                ${statusLabel}
+                <span class="portal-task__tool-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
+              </summary>
+              ${this.renderToolDetailsHtml(row)}
+            </details>
+          `;
+        }
+        if (row.kind === "checkpoint_resolution") {
+          return `
+            <details class="portal-task__tool-call">
+              <summary>
+                <span class="portal-task__tool-icon" aria-hidden="true">${this.getToolCallIconMarkup()}</span>
+                <span class="portal-task__tool-name">${this.escapeHtml(row.title || this.t("Checkpoint resolved"))}</span>
+                <span class="portal-task__tool-chevron" aria-hidden="true">${this.getChevronRightIconMarkup()}</span>
+              </summary>
+              ${this.renderCheckpointResolutionDetailsHtml(row)}
+            </details>
+          `;
+        }
+        return `<div class="portal-task__scratchpad-system">${this.escapeHtml(row.line)}</div>`;
+      })
+      .join("");
+    const workingHtml = !rowHtml && isActive
+      ? `<div class="portal-task-thread__agent-text">${this.escapeHtml(this.t("Working…"))}</div>`
+      : "";
+    return `
+      <div class="portal-task-thread__message" data-sender="agent" data-run-id="${this.escapeHtml(String(run.id))}">
+        <div class="portal-task-thread__message-label">${this.escapeHtml(this.t("Task agent"))}</div>
+        <div class="portal-task-thread__bubble portal-task-thread__bubble--live">
+          ${rowHtml || workingHtml}
+          ${resultHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  renderAgenticTaskThreadHtml(automationId, state, automation, selectedRunId = "") {
+    const name = automation && automation.name ? String(automation.name) : this.t("Agentic Task");
+    const latestRun = automation && automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
+    const checkpoint = automation && automation.openCheckpoint && typeof automation.openCheckpoint === "object" ? automation.openCheckpoint : null;
+    const checkpointRunId = checkpoint && checkpoint.runId ? String(checkpoint.runId) : "";
+    const suppressActionsForRunIds = checkpointRunId ? new Set([checkpointRunId]) : null;
+    const rawRecentRuns = automation && Array.isArray(automation.recentRuns) ? automation.recentRuns : [];
+    const latestRunId = latestRun && latestRun.id ? String(latestRun.id) : "";
+    const recentRuns = latestRunId
+      ? rawRecentRuns.filter((run) => !run || String(run.id || "") !== latestRunId)
+      : rawRecentRuns;
+    const allRuns = latestRun ? [latestRun, ...recentRuns] : recentRuns;
+    const selectedRun = allRuns.find((run) => run && String(run.id || "") === String(selectedRunId || "")) || latestRun;
+    const selectedRunIdSafe = selectedRun && selectedRun.id ? String(selectedRun.id) : String(selectedRunId || "");
+    const triggerLabel = automation && automation.scheduleEnabled === false ? this.t("Manual only") : this.t("Scheduled");
+    const status = selectedRun && selectedRun.status ? String(selectedRun.status) : String(automation.status || "");
+    const subtitleParts = [automation && automation.agentName ? String(automation.agentName) : "", triggerLabel];
+    if (automation && automation.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(automation.nextTriggerAt)}`);
+    const runBusy = this.automationManualRunBusy && this.automationManualRunBusy.has(automationId);
+    const canRunNow = this.isRunnableAutomation(automation);
+    const checkpointHtml = checkpoint ? this.renderAutomationCheckpointHtml(checkpoint) : "";
+    const taskMessages = automation && Array.isArray(automation.messages) ? automation.messages : [];
+    const latestRunAlreadyInTranscript = Boolean(
+      selectedRunIdSafe &&
+      this.isRunTerminalStatus(selectedRun && selectedRun.status ? selectedRun.status : "") &&
+      taskMessages.some((message) => {
+        const metadata = message && message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+        return String(metadata.agent_run_id || metadata.agentRunId || "").trim() === selectedRunIdSafe;
+      })
+    );
+    const liveRunHtml = selectedRun && !latestRunAlreadyInTranscript ? this.renderTaskThreadRunActivityHtml(selectedRun) : "";
+    const historyRuns = allRuns.filter((run) => run && String(run.id || "") !== selectedRunIdSafe);
+    const recentHtml = this.renderAutomationRecentRunsHtml(automationId, state, historyRuns, { suppressActionsForRunIds });
+    return `
+      <div class="portal-task-thread" data-task-thread-id="${this.escapeHtml(automationId)}" data-task-thread-run-id="${this.escapeHtml(selectedRunIdSafe)}">
+        <div class="portal-task-thread__header">
+          <button type="button" class="portal-task-thread__back" data-task-thread-back="true" aria-label="${this.escapeHtml(this.t("Back to tasks"))}">
+            ${this.getChevronRightIconMarkup()}
+          </button>
+          <div class="portal-task-thread__title-wrap">
+            <div class="portal-task-thread__title">${this.escapeHtml(name)}</div>
+            <div class="portal-task-thread__subtitle">${this.escapeHtml([this.t("Run thread"), ...subtitleParts.filter(Boolean)].join(" · "))}</div>
+          </div>
+          ${this.renderRunStatusPill(status)}
+        </div>
+        <div class="portal-task-thread__scroll custom-scrollbar">
+          <div class="portal-task-thread__messages">
+            ${this.renderTaskThreadMessagesHtml(taskMessages)}
+            ${liveRunHtml}
+          </div>
+          ${checkpointHtml}
+          ${recentHtml ? `<details class="portal-task-thread__history"><summary>${this.escapeHtml(this.t("Runs"))}</summary>${recentHtml}</details>` : ""}
+        </div>
+        <div class="portal-task-thread__composer">
+          <textarea class="portal-task-thread__input" data-task-thread-input rows="3" placeholder="${this.escapeHtml(this.t("Ask this task agent to do something…"))}" ${canRunNow ? "" : "disabled"}></textarea>
+          <div class="portal-task-thread__composer-bar">
+            <span class="portal-task-thread__hint">${this.escapeHtml(this.t("Messages are saved to this task session."))}</span>
+            <button type="button" class="portal-task-thread__send" data-task-thread-send="${this.escapeHtml(automationId)}" data-busy="${runBusy ? "true" : "false"}" ${runBusy || !canRunNow ? "disabled" : ""}>
+              ${this.escapeHtml(runBusy ? this.t("Queuing…") : this.t("Send"))}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   renderAutomationCardHtml(automationId, state, automation) {
     const expanded = Boolean(state && state.expanded);
-    const name = automation && automation.name ? String(automation.name) : this.t("Automation");
+    const name = automation && automation.name ? String(automation.name) : this.t("Agentic Task");
     const latestRun = automation && automation.latestRun && typeof automation.latestRun === "object" ? automation.latestRun : null;
     const checkpoint = automation && automation.openCheckpoint && typeof automation.openCheckpoint === "object" ? automation.openCheckpoint : null;
     const checkpointKind = checkpoint && checkpoint.kind ? String(checkpoint.kind).trim().toLowerCase() : "";
@@ -7852,7 +8413,7 @@ class ChatPortalClient {
     const status = checkpointStatus || (latestRun && latestRun.status ? latestRun.status : (automation.status || "draft"));
     const attentionStatus = this.getTaskAttentionStatus(status);
     const needsAttention = Boolean(checkpoint || attentionStatus);
-    const triggerLabel = this.getAutomationTriggerLabel(automation && automation.triggerType);
+    const triggerLabel = automation && automation.scheduleEnabled === false ? this.t("Manual only") : this.t("Scheduled");
     const ownerLabel = automation && automation.agentName ? String(automation.agentName) : "";
     const subtitleParts = [ownerLabel, triggerLabel];
     if (automation && automation.nextTriggerAt) subtitleParts.push(`${this.t("Next")} ${this.formatDueTime(automation.nextTriggerAt)}`);
@@ -7887,7 +8448,7 @@ class ChatPortalClient {
               <div class="portal-task__summary-preview" ${needsAttention ? "hidden" : ""}>${this.escapeHtml(needsAttention ? "" : latestSummary)}</div>
             </div>
           </button>
-          ${canRunNow ? `<button type="button" class="portal-task__run-now" data-automation-run-now="${this.escapeHtml(automationId)}" data-busy="${runBusy ? "true" : "false"}" ${runBusy ? "disabled" : ""} aria-label="${this.escapeHtml(this.t("Run automation now"))}" title="${this.escapeHtml(this.t("Run automation now"))}">
+          ${canRunNow ? `<button type="button" class="portal-task__run-now" data-automation-run-now="${this.escapeHtml(automationId)}" data-busy="${runBusy ? "true" : "false"}" ${runBusy ? "disabled" : ""} aria-label="${this.escapeHtml(this.t("Run task now"))}" title="${this.escapeHtml(this.t("Run task now"))}">
             ${this.getAutomationRunIconMarkup()}
           </button>` : ""}
         </div>
@@ -7908,7 +8469,7 @@ class ChatPortalClient {
     const previewHtml = preview ? this.renderAgentRunApprovalPreview(preview) : "";
     const payloadPrompt = payload && payload.prompt ? String(payload.prompt).trim() : "";
     const payloadQuestions = payload && Array.isArray(payload.questions) ? payload.questions : [];
-    const needsText = payloadPrompt || prompt || (kind === "approval" ? this.t("This automation needs approval to continue.") : this.t("This automation needs more information to continue."));
+    const needsText = payloadPrompt || prompt || (kind === "approval" ? this.t("This task needs approval to continue.") : this.t("This task needs more information to continue."));
     if (kind === "approval") {
       return `
         <div class="portal-task__section">
@@ -7957,7 +8518,7 @@ class ChatPortalClient {
 
   renderRunCardHtml(runId, state, run) {
     const statusRaw = (run && run.status ? run.status : "queued").toString().trim().toLowerCase() || "queued";
-    const title = run && run.title ? run.title : this.t("Background task");
+    const title = run && run.title ? run.title : this.t("Sub-agent");
     const lastEvent = state && Array.isArray(state.events) && state.events.length ? state.events[state.events.length - 1] : null;
     const subtitle = this.formatRunSubtitle(run, lastEvent);
     const expanded = Boolean(state && state.expanded);
@@ -7973,7 +8534,7 @@ class ChatPortalClient {
         <button type="button" class="portal-task__header" data-run-toggle="${this.escapeHtml(runId)}">
           <div class="portal-task__meta">
             <div class="portal-task__title-row">
-              <div class="portal-task__title">${this.escapeHtml(String(title || this.t("Background task")))}</div>
+              <div class="portal-task__title">${this.escapeHtml(String(title || this.t("Sub-agent")))}</div>
               ${this.renderRunStatusPill(statusRaw)}
             </div>
             <div class="portal-task__subtitle">${this.escapeHtml(subtitle)}</div>
@@ -9994,8 +10555,17 @@ class ChatPortalClient {
 	        wrapper.innerHTML = this.renderMarkdown(cleaned);
 	        this.applyMarkdownTableStyles(wrapper);
 	      }
-	      return wrapper;
-	    }
+      return wrapper;
+    }
+
+    if (type === "agentic_task_approval") {
+      const card = this.buildAgenticTaskApprovalCard(payload, block);
+      if (!card) return null;
+      card.dataset.contentBlock = "true";
+      card.dataset.blockType = "agentic_task_approval";
+      if (blockId) card.dataset.blockId = blockId;
+      return card;
+    }
 
     if (type === "tool_use") {
       const normalizedTool = (payload.tool_name || payload.toolName || "").toString().trim().toLowerCase();
@@ -10961,8 +11531,8 @@ class ChatPortalClient {
       email_get_thread: "read email thread",
       search_knowledge: "search knowledge base",
       read_knowledge: "read documents",
-      start_agent_run: "start background run",
-      continue_agent_run: "continue background run",
+      start_agent_run: "start sub-agent",
+      continue_agent_run: "continue sub-agent",
     };
     if (Object.prototype.hasOwnProperty.call(mapping, normalized)) {
       return mapping[normalized];
@@ -11173,7 +11743,7 @@ class ChatPortalClient {
       runStatus,
       pillLabel,
       variant,
-      title: title || "Background task",
+      title: title || "Sub-agent",
       subtitle,
       approvalPreview,
       approvalId: approvalId ? approvalId.toString().trim() : "",
@@ -12388,7 +12958,7 @@ class ChatPortalClient {
       searching: "Searching…",
       updating: "Refining answer…",
       refining: "Refining answer…",
-      error: "Automation issue detected.",
+      error: "Issue detected.",
     };
     const baseLabel = labelOverride || labelMap[mode] || labelMap.working;
     const isError = mode === "error";
@@ -13655,39 +14225,6 @@ class ChatPortalClient {
     // Initialize session empty state
     this.updateSessionEmptyState();
     
-    // Bind Recents toggle (expand/collapse)
-    this.initRecentsToggle();
-  }
-
-  initRecentsToggle() {
-    const toggleBtn = this.container.querySelector('[data-recents-toggle]');
-    const chevron = this.container.querySelector('[data-recents-chevron]');
-    const itemsContainer = this.container.querySelector('[data-sessions-items]');
-    
-    if (!toggleBtn || !itemsContainer) return;
-    
-    // Load saved state from localStorage
-    const storageKey = `recents_collapsed_${this.businessSlug}_${this.agentSlug}`;
-    const isCollapsed = localStorage.getItem(storageKey) === 'true';
-    
-    if (isCollapsed) {
-      itemsContainer.classList.add('hidden');
-      if (chevron) chevron.style.transform = 'rotate(-90deg)';
-    }
-    
-    toggleBtn.addEventListener('click', () => {
-      const nowCollapsed = !itemsContainer.classList.contains('hidden');
-      
-      if (nowCollapsed) {
-        itemsContainer.classList.add('hidden');
-        if (chevron) chevron.style.transform = 'rotate(-90deg)';
-        localStorage.setItem(storageKey, 'true');
-      } else {
-        itemsContainer.classList.remove('hidden');
-        if (chevron) chevron.style.transform = '';
-        localStorage.setItem(storageKey, 'false');
-      }
-    });
   }
 
   initSidebarToggle() {
@@ -13904,7 +14441,7 @@ class ChatPortalClient {
     const explicitType = (session.session_type || session.sessionType || "").toString().trim().toLowerCase();
     if (explicitType) return explicitType;
     if (session.custom_assistant_id || session.customAssistantId) return "custom_assistant";
-    if (session.automation_id || session.automationId) return "task";
+    if (session.agenticTaskId || session.agentic_task_id) return "task";
     return "chat";
   }
 

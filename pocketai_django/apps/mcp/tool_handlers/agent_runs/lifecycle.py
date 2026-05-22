@@ -45,7 +45,7 @@ def _start_agent_run_handler(
 
     title = str(arguments.get("title") or "").strip()
     if not title:
-        title = (goal[:200].strip() or "Background run").rstrip()
+        title = (goal[:200].strip() or "Sub-agent").rstrip()
 
     followup_mode = str(arguments.get("followup_mode") or "").strip().lower() or "handoff"
     if followup_mode not in {"handoff", "supervisor"}:
@@ -68,7 +68,7 @@ def _start_agent_run_handler(
             "status": "error",
             "error_code": "missing_actor_user",
             "error": "missing_actor_user",
-            "hint": "Authenticated actor_user_id is required to start background runs.",
+            "hint": "Authenticated actor_user_id is required to start sub-agents.",
         }
 
     if actor_id not in {business_owner_id, agent_user_id}:
@@ -131,7 +131,7 @@ def _start_agent_run_handler(
         )
         explicit_delegate = any(t in needle for t in tokens)
     delegate_intent = "explicit" if explicit_delegate else "implicit"
-    followup_requested = bool(explicit_delegate or delegate_mode_enabled)
+    followup_requested = True
 
     visibility = str(arguments.get("visibility") or "initiator").strip().lower()
     if visibility not in {"initiator", "managers", "workspace"}:
@@ -187,6 +187,17 @@ def _start_agent_run_handler(
                     id=parent_run_uuid,
                     business_profile_id=conversation.business_profile_id,
                 ).first()
+        elif convo_source == "agentic_task_session":
+            parent_run = (
+                AgentRun.objects.select_for_update()
+                .filter(
+                    business_profile_id=conversation.business_profile_id,
+                    execution_conversation_id=conversation.id,
+                    status=AgentRunStatus.RUNNING,
+                )
+                .order_by("-started_at", "-created_at")
+                .first()
+            )
 
         existing_run = None
         if trigger_message_id and parent_run is None:
@@ -236,7 +247,7 @@ def _start_agent_run_handler(
                     "source": existing_run.source,
                     "visibility": existing_run.visibility,
                 },
-                "hint": "Background run already queued for this message. Watch the Activity panel for progress.",
+                "hint": "Sub-agent already queued for this message.",
             }
 
         run = AgentRun.objects.create(
@@ -244,7 +255,7 @@ def _start_agent_run_handler(
             agent_profile_id=agent_profile.id,
             conversation_id=parent_run.conversation_id if parent_run is not None else conversation.id,
             created_by_id=actor_id,
-            automation=parent_run.automation if parent_run is not None else None,
+            agentic_task=parent_run.agentic_task if parent_run is not None else None,
             parent_run=parent_run,
             delegated_by_agent_id=agent_profile.id if parent_run is not None else None,
             run_snapshot=run_snapshot,
@@ -297,7 +308,7 @@ def _start_agent_run_handler(
         if parent_run is not None:
             checkpoint = AgentRunCheckpoint.objects.create(
                 business_profile=parent_run.business_profile,
-                automation=parent_run.automation,
+                agentic_task=parent_run.agentic_task,
                 run=parent_run,
                 conversation=parent_run.conversation,
                 child_run=run,
@@ -339,7 +350,7 @@ def _start_agent_run_handler(
             "source": run.source,
             "visibility": run.visibility,
         },
-        "hint": "Delegated run queued; the parent run will resume when it finishes." if run.parent_run_id else "Background run queued. Watch the Activity panel for progress.",
+        "hint": "Sub-agent queued; the parent run will resume when it finishes." if run.parent_run_id else "Sub-agent queued in this session.",
     }
 
 

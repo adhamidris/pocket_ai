@@ -317,6 +317,7 @@ class McpTurnExecutionMixin(
                         iter_span.set_attribute("mcp.pending_tool_calls", len(current_tool_calls))
                         iter_span.set_attribute("mcp.transcript_length", len(transcript))
                     iteration_executed_tools: list[tuple[str, str]] = []
+                    batch_tool_call_id_by_signature: dict[str, str] = {}
                     # Execute each tool_call and append tool results.
                     for tool_call in current_tool_calls:
                         prepared_tool_call = self._prepare_tool_call_for_execution(
@@ -335,7 +336,49 @@ class McpTurnExecutionMixin(
 
                         # Record the signature of the tool call after any hint injection so we can
                         # detect no-progress loops.
-                        seen_tool_signatures.add(self._tool_signature(tool_name, arguments))
+                        tool_signature = self._tool_signature(tool_name, arguments)
+                        if tool_signature in batch_tool_call_id_by_signature:
+                            duplicate_of = batch_tool_call_id_by_signature.get(tool_signature) or ""
+                            structured_log(
+                                "mcp",
+                                "tool.duplicate_same_batch_skipped",
+                                {
+                                    "tool": tool_name,
+                                    "tool_call_id": str(tool_call_id or ""),
+                                    "duplicate_of_tool_call_id": duplicate_of,
+                                },
+                                context={
+                                    "conversation": conversation.id,
+                                    "business": conversation.business_profile_id,
+                                },
+                                logger_obj=logger,
+                                level=logging.INFO,
+                            )
+                            tool_result = {
+                                "tool": tool_name,
+                                "status": "ok",
+                                "deduped": True,
+                                "duplicate_of_tool_call_id": duplicate_of,
+                                "hint": "Duplicate tool call in the same model response; skipped executing and rendering it again.",
+                            }
+                            self._append_tool_result_to_trace_and_transcript(
+                                conversation=conversation,
+                                tool_context=tool_context,
+                                transcript=transcript,
+                                iteration_executed_tools=iteration_executed_tools,
+                                tool_name=tool_name,
+                                tool_call_id=tool_call.get("id"),
+                                tool_result=tool_result,
+                                arguments=arguments,
+                                llm_requested_tool_name=llm_requested_tool_name,
+                                llm_requested_arguments=llm_requested_arguments,
+                                call_duration_ms=0,
+                                call_origin="deduped",
+                                cache_hit=False,
+                            )
+                            continue
+                        seen_tool_signatures.add(tool_signature)
+                        batch_tool_call_id_by_signature[tool_signature] = str(tool_call_id or tool_event_id or "")
 
                         call_origin = "live"
                         call_duration_ms: float | None = None

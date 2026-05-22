@@ -9,7 +9,7 @@ TASK_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
 
     _function_schema(
         name="list_tasks",
-        description="List saved automations for the current business, optionally filtered by owning assistant or status.",
+        description="List saved Agentic Tasks for the current business, optionally filtered by owning agent or status.",
         properties={
             "agent_id": {"type": "string", "description": "Optional agent UUID."},
             "status": {"type": "string", "enum": ["draft", "active", "paused", "all"]},
@@ -18,53 +18,53 @@ TASK_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         required=(),
     ),
     _function_schema(
-        name="draft_task",
+        name="draft_agentic_task",
         description=(
-            "Create an inactive automation draft. Use for persistent scheduled tasks. "
+            "Create an inactive Agentic Task draft. Use for persistent manual or scheduled task agents. "
             "Drafts must be approved by the user before activation. Only store fields visible in the task UI."
         ),
         properties={
             "agent_id": {"type": "string", "description": "Optional owning agent UUID. Defaults to the current agent."},
             "name": {"type": "string", "description": "Short task name."},
             "goal": {"type": "string", "description": "What the task should accomplish."},
-            "trigger_type": {"type": "string", "enum": ["schedule"]},
-            "trigger_config": {"type": "object", "additionalProperties": True},
+            "schedule_enabled": {"type": "boolean", "description": "Enable cron runs for this task."},
+            "schedule_config": {"type": "object", "additionalProperties": True},
             "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
         },
         required=("name", "goal"),
     ),
     _function_schema(
-        name="update_task",
-        description="Update an existing saved automation draft or paused automation.",
+        name="update_agentic_task",
+        description="Update an existing saved Agentic Task draft or paused Agentic Task.",
         properties={
-            "task_id": {"type": "string", "description": "Automation/task UUID."},
+            "agentic_task_id": {"type": "string", "description": "Agentic Task UUID."},
             "name": {"type": "string"},
             "goal": {"type": "string"},
-            "trigger_type": {"type": "string", "enum": ["schedule"]},
-            "trigger_config": {"type": "object", "additionalProperties": True},
+            "schedule_enabled": {"type": "boolean"},
+            "schedule_config": {"type": "object", "additionalProperties": True},
             "visibility": {"type": "string", "enum": ["initiator", "managers", "workspace"]},
         },
-        required=("task_id",),
+        required=("agentic_task_id",),
     ),
     _function_schema(
-        name="request_task_activation",
+        name="request_agentic_task_activation",
         description=(
-            "Activate a saved task only after explicit user approval. "
+            "Activate a saved Agentic Task only after explicit user approval. "
             "If approved is false or omitted, returns an approval-needed payload instead of activating."
         ),
         properties={
-            "task_id": {"type": "string", "description": "Automation/task UUID."},
+            "agentic_task_id": {"type": "string", "description": "Agentic Task UUID."},
             "approved": {"type": "boolean", "description": "Set true only after the user explicitly approves activation."},
         },
-        required=("task_id",),
+        required=("agentic_task_id",),
     ),
     _function_schema(
-        name="pause_task",
-        description="Pause an active saved automation.",
+        name="pause_agentic_task",
+        description="Pause an active saved Agentic Task.",
         properties={
-            "task_id": {"type": "string", "description": "Automation/task UUID."},
+            "agentic_task_id": {"type": "string", "description": "Agentic Task UUID."},
             "reason": {"type": "string"},
         },
-        required=("task_id",),
+        required=("agentic_task_id",),
     ),
 )

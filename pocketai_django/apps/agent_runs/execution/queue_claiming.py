@@ -50,6 +50,11 @@ class AgentRunQueueClaimingMixin:
             .filter(Q(run_after__lte=now) | Q(run_after__isnull=True))
             .order_by("run_after", "created_at")
         )
+        run_kind = str(getattr(self, "run_kind", "all") or "all").strip().lower()
+        if run_kind == "sub_agent":
+            qs = qs.filter(agentic_task_id__isnull=True)
+        elif run_kind == "agentic_task":
+            qs = qs.filter(agentic_task_id__isnull=False)
 
         supports_skip_locked = bool(
             getattr(db_connection.features, "has_select_for_update", False)

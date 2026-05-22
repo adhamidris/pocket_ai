@@ -1,7 +1,7 @@
 {% extends "frontend/base_app.html" %}
 {% load i18n %}
 
-{% block title %}{% trans "Automations" %} | Pocket AI{% endblock %}
+{% block title %}{% trans "Agentic Tasks" %} | Pocket AI{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -91,42 +91,42 @@
 
 {% block content %}
 <div class="min-h-screen flex">
-  {% include "frontend/components/dashboard/sidebar.html" with active="automations" user_name=user_name %}
+  {% include "frontend/components/dashboard/sidebar.html" with active="agentic-tasks" user_name=user_name %}
   <main class="flex-1 overflow-auto pa-workspace">
-    <div class="pa-shell" data-automations-page data-agent-id="{{ default_agent_id }}">
+    <div class="pa-shell" data-agentic-tasks-page data-agent-id="{{ default_agent_id }}">
       <header class="pa-header">
         <div>
-          <p class="pa-kicker">{% trans "Background Jobs" %}</p>
-          <h1 class="pa-title">{% trans "Automations" %}</h1>
-          <p class="pa-subtitle">{% trans "Create scheduled background work your assistant runs from cron schedules. Automations are not chat personas; their history and approvals live here." %}</p>
+          <p class="pa-kicker">{% trans "Task Agents" %}</p>
+          <h1 class="pa-title">{% trans "Agentic Tasks" %}</h1>
+          <p class="pa-subtitle">{% trans "Create task agents with dedicated instructions and an optional cron schedule. Each task keeps its own session, memory, run history, and approvals." %}</p>
         </div>
         <div class="pa-actions">
           <button type="button" class="pa-button" data-automation-refresh {% if not default_agent_id %}disabled{% endif %}>{% trans "Refresh" %}</button>
-          <button type="button" class="pa-button pa-button-primary" data-automation-new {% if not default_agent_id %}disabled{% endif %}>{% trans "Create automation" %}</button>
+          <button type="button" class="pa-button pa-button-primary" data-automation-new {% if not default_agent_id %}disabled{% endif %}>{% trans "Create task" %}</button>
         </div>
       </header>
 
       {% if assistant_notice %}<section class="pa-notice">{{ assistant_notice }}</section>{% endif %}
-      <section class="pa-warning pa-hidden" data-automation-worker-warning>{% trans "Automation processing is not active. Start process_agent_automations and process_agent_runs for scheduled and background execution." %}</section>
+      <section class="pa-warning pa-hidden" data-automation-worker-warning>{% trans "Agentic Task processing is not active. Start process_agentic_tasks and process_agent_runs for scheduled and background execution." %}</section>
 
       <section class="pa-layout">
         <div class="pa-stack">
           <div class="pa-section">
             <div class="pa-section-head">
               <div>
-                <h2 class="pa-section-title">{% trans "Automations" %}</h2>
-                <p class="pa-section-note">{% trans "Background jobs that can run without opening chat." %}</p>
+                <h2 class="pa-section-title">{% trans "Agentic Tasks" %}</h2>
+                <p class="pa-section-note">{% trans "Task agents that can run manually or on a cron schedule." %}</p>
               </div>
               <span class="pa-pill" data-automation-count>0</span>
             </div>
-            <div class="pa-list" data-automation-list><div class="pa-empty"><p class="pa-empty-text">{% trans "Loading automations..." %}</p></div></div>
+            <div class="pa-list" data-automation-list><div class="pa-empty"><p class="pa-empty-text">{% trans "Loading Agentic Tasks..." %}</p></div></div>
           </div>
 
           <div class="pa-section">
             <div class="pa-section-head">
               <div>
                 <h2 class="pa-section-title">{% trans "Run history" %}</h2>
-                <p class="pa-section-note" data-run-scope>{% trans "Latest background runs across all automations." %}</p>
+                <p class="pa-section-note" data-run-scope>{% trans "Latest runs across all Agentic Tasks." %}</p>
               </div>
               <button type="button" class="pa-button" data-runs-clear>{% trans "Show all" %}</button>
             </div>
@@ -135,10 +135,10 @@
         </div>
 
         <aside class="pa-section pa-side">
-          <h2 class="pa-side-title">{% trans "Automation design rule" %}</h2>
-          <p class="pa-side-text">{% trans "Use automations for repeatable background outcomes. Use Custom Assistants when someone needs to talk to a specialist." %}</p>
+          <h2 class="pa-side-title">{% trans "Task design rule" %}</h2>
+          <p class="pa-side-text">{% trans "Use Agentic Tasks for repeatable outcomes with a dedicated session. Use Custom Assistants when someone needs to talk to a specialist." %}</p>
           <div class="pa-mini-list">
-            <div class="pa-mini-item"><strong>{% trans "Trigger" %}</strong><span>{% trans "Cron schedule." %}</span></div>
+            <div class="pa-mini-item"><strong>{% trans "Schedule" %}</strong><span>{% trans "Optional cron schedule." %}</span></div>
             <div class="pa-mini-item"><strong>{% trans "Goal" %}</strong><span>{% trans "The business outcome the assistant should complete." %}</span></div>
             <div class="pa-mini-item"><strong>{% trans "Approval policy" %}</strong><span>{% trans "Decide whether it drafts, suggests, or acts within policy." %}</span></div>
           </div>
@@ -151,8 +151,8 @@
           <div class="pa-drawer-head">
             <div>
               <p class="pa-kicker">{% trans "Builder" %}</p>
-              <h2 class="pa-drawer-title" id="automation-drawer-title" data-form-title>{% trans "Create automation" %}</h2>
-              <p class="pa-section-note">{% trans "Define when it runs, what it should do, and how much approval it needs." %}</p>
+              <h2 class="pa-drawer-title" id="automation-drawer-title" data-form-title>{% trans "Create task" %}</h2>
+              <p class="pa-section-note">{% trans "Define what it should do, whether it runs on a schedule, and how much approval it needs." %}</p>
             </div>
             <button type="button" class="pa-button" data-automation-close>{% trans "Close" %}</button>
           </div>
@@ -160,19 +160,19 @@
             <form class="pa-form" data-automation-form>
               <input type="hidden" data-automation-input="id">
               <label class="pa-field">{% trans "Name" %}<input class="pa-input" data-automation-input="name" autocomplete="off" placeholder="{% trans 'Daily pipeline summary' %}"></label>
-              <input type="hidden" value="schedule" data-automation-input="triggerType">
+              <label class="pa-field">{% trans "Scheduled runs" %}<select class="pa-select" data-automation-input="scheduleEnabled"><option value="true">{% trans "Enabled" %}</option><option value="false">{% trans "Manual only" %}</option></select></label>
               <div class="pa-field-row" data-trigger-panel="schedule">
                 <label class="pa-field">{% trans "Preset" %}<select class="pa-select" data-automation-input="schedulePreset"><option value="hourly">{% trans "Every hour" %}</option><option value="daily">{% trans "Daily" %}</option><option value="weekdays">{% trans "Weekdays" %}</option><option value="advanced">{% trans "Cron" %}</option></select></label>
                 <label class="pa-field">{% trans "Time" %}<input type="time" value="09:00" class="pa-input" data-automation-input="scheduleTime"></label>
                 <label class="pa-field">{% trans "Cron" %}<input placeholder="0 9 * * *" class="pa-input" data-automation-input="scheduleCron"></label>
               </div>
-              <label class="pa-field">{% trans "Goal" %}<textarea class="pa-textarea" data-automation-input="goal" placeholder="{% trans 'Explain the outcome this automation should produce.' %}"></textarea></label>
+              <label class="pa-field">{% trans "Goal" %}<textarea class="pa-textarea" data-automation-input="goal" placeholder="{% trans 'Explain the outcome this task should produce.' %}"></textarea></label>
               <label class="pa-field">{% trans "Approval" %}<select class="pa-select" data-automation-input="autonomyMode"><option value="draft_for_approval">{% trans "Prepare drafts for approval" %}</option><option value="suggest_only">{% trans "Suggest only" %}</option><option value="autonomous_with_policy">{% trans "Act within policy" %}</option><option value="full_autonomy_explicit">{% trans "Full autonomy" %}</option></select></label>
               <label class="pa-field">{% trans "Status" %}<select class="pa-select" data-automation-input="status"><option value="active">{% trans "Enabled" %}</option><option value="draft">{% trans "Draft" %}</option><option value="paused">{% trans "Paused" %}</option></select></label>
               <p class="pa-error" data-automation-error></p>
               <div class="pa-drawer-foot">
                 <button type="button" class="pa-button" data-automation-close>{% trans "Cancel" %}</button>
-                <button type="submit" class="pa-button pa-button-primary" {% if not default_agent_id %}disabled{% endif %}>{% trans "Save automation" %}</button>
+                <button type="submit" class="pa-button pa-button-primary" {% if not default_agent_id %}disabled{% endif %}>{% trans "Save task" %}</button>
               </div>
             </form>
           </div>
@@ -186,7 +186,7 @@
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
-    var root = document.querySelector("[data-automations-page]");
+    var root = document.querySelector("[data-agentic-tasks-page]");
     if (!root) return;
     var agentId = root.getAttribute("data-agent-id") || "";
     var list = root.querySelector("[data-automation-list]");
@@ -197,12 +197,12 @@
     var drawer = root.querySelector("[data-automation-drawer]");
     var warning = root.querySelector("[data-automation-worker-warning]");
     var errorEl = root.querySelector("[data-automation-error]");
-    var automations = [];
+    var agenticTasks = [];
     var runs = [];
     var templates = [
-      { name: "{% trans 'Daily summary' %}", triggerType: "schedule", preset: "daily", goal: "{% trans 'Summarize yesterday’s important customer activity, open follow-ups, and risks for the team.' %}" },
-      { name: "{% trans 'Hourly operations check' %}", triggerType: "schedule", preset: "hourly", goal: "{% trans 'Check current operational signals and summarize anything that needs attention.' %}" },
-      { name: "{% trans 'Weekday pipeline review' %}", triggerType: "schedule", preset: "weekdays", goal: "{% trans 'Review the pipeline each weekday morning and identify stalled opportunities and next actions.' %}" }
+      { name: "{% trans 'Daily summary' %}", preset: "daily", goal: "{% trans 'Summarize yesterday’s important customer activity, open follow-ups, and risks for the team.' %}" },
+      { name: "{% trans 'Hourly operations check' %}", preset: "hourly", goal: "{% trans 'Check current operational signals and summarize anything that needs attention.' %}" },
+      { name: "{% trans 'Weekday pipeline review' %}", preset: "weekdays", goal: "{% trans 'Review the pipeline each weekday morning and identify stalled opportunities and next actions.' %}" }
     ];
     function csrf() { var match = document.cookie ? document.cookie.match(/csrftoken=([^;]+)/) : null; return match ? decodeURIComponent(match[1]) : ""; }
     function escapeHtml(value) { var div = document.createElement("div"); div.textContent = value == null ? "" : String(value); return div.innerHTML; }
@@ -234,41 +234,41 @@
       return "0 * * * *";
     }
     function showTriggerPanel() {
-      var trigger = field("triggerType").value || "schedule";
-      root.querySelectorAll("[data-trigger-panel]").forEach(function (panel) { panel.classList.toggle("pa-hidden", panel.getAttribute("data-trigger-panel") !== trigger); });
+      var enabled = !field("scheduleEnabled") || field("scheduleEnabled").value !== "false";
+      root.querySelectorAll("[data-trigger-panel]").forEach(function (panel) { panel.classList.toggle("pa-hidden", !enabled); });
     }
     function resetForm(template) {
       setError("");
       field("id").value = ""; field("name").value = template && template.name || ""; field("goal").value = template && template.goal || ""; field("scheduleCron").value = "";
-      field("triggerType").value = template && template.triggerType || "schedule"; field("schedulePreset").value = template && template.preset || "hourly"; field("status").value = "active"; field("autonomyMode").value = "draft_for_approval";
+      field("scheduleEnabled").value = template && template.scheduleEnabled === false ? "false" : "true"; field("schedulePreset").value = template && template.preset || "hourly"; field("status").value = "active"; field("autonomyMode").value = "draft_for_approval";
       showTriggerPanel();
-      var title = root.querySelector("[data-form-title]"); if (title) title.textContent = "{% trans 'Create automation' %}";
+      var title = root.querySelector("[data-form-title]"); if (title) title.textContent = "{% trans 'Create task' %}";
       openDrawer();
     }
     function edit(item) {
       if (!item) return;
-      field("id").value = item.id || ""; field("name").value = item.name || ""; field("triggerType").value = item.triggerType || "schedule"; field("status").value = item.status || "active"; field("autonomyMode").value = item.autonomyMode || "draft_for_approval"; field("goal").value = item.instructions && (item.instructions.goal || item.instructions.instructions || item.instructions.task) || ""; field("scheduleCron").value = item.triggerConfig && item.triggerConfig.cron || "";
+      field("id").value = item.id || ""; field("name").value = item.name || ""; field("scheduleEnabled").value = item.scheduleEnabled ? "true" : "false"; field("status").value = item.status || "active"; field("autonomyMode").value = item.autonomyMode || "draft_for_approval"; field("goal").value = item.instructions && (item.instructions.goal || item.instructions.instructions || item.instructions.task) || ""; field("scheduleCron").value = item.scheduleConfig && item.scheduleConfig.cron || "";
       showTriggerPanel();
-      var title = root.querySelector("[data-form-title]"); if (title) title.textContent = "{% trans 'Edit automation' %}";
+      var title = root.querySelector("[data-form-title]"); if (title) title.textContent = "{% trans 'Edit task' %}";
       openDrawer();
     }
-    function triggerSummary(item) { if (!item) return ""; return item.nextTriggerAt ? "{% trans 'Next' %} " + formatDate(item.nextTriggerAt) : "{% trans 'Schedule' %}"; }
+    function triggerSummary(item) { if (!item) return ""; if (!item.scheduleEnabled) return "{% trans 'Manual only' %}"; return item.nextTriggerAt ? "{% trans 'Next' %} " + formatDate(item.nextTriggerAt) : "{% trans 'Schedule enabled' %}"; }
     function iconSvg(item) { return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'; }
-    function templateHtml() { return '<div class="pa-empty"><h2 class="pa-empty-title">{% trans "Create your first automation" %}</h2><p class="pa-empty-text">{% trans "Start with a practical background automation. You can keep it as a draft until the team is ready." %}</p><div class="pa-template-grid">' + templates.map(function (item, index) { return '<button type="button" class="pa-template" data-template-index="' + index + '"><strong>' + escapeHtml(item.name) + '</strong><span>' + escapeHtml(item.goal) + '</span></button>'; }).join("") + '</div></div>'; }
-    function renderAutomations() {
-      if (countEl) countEl.textContent = String(automations.length);
+    function templateHtml() { return '<div class="pa-empty"><h2 class="pa-empty-title">{% trans "Create your first Agentic Task" %}</h2><p class="pa-empty-text">{% trans "Start with a practical task agent. You can keep it manual-only or enable a cron schedule." %}</p><div class="pa-template-grid">' + templates.map(function (item, index) { return '<button type="button" class="pa-template" data-template-index="' + index + '"><strong>' + escapeHtml(item.name) + '</strong><span>' + escapeHtml(item.goal) + '</span></button>'; }).join("") + '</div></div>'; }
+    function renderAgenticTasks() {
+      if (countEl) countEl.textContent = String(agenticTasks.length);
       if (!agentId) { list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "No Business Assistant is available yet." %}</p></div>'; return; }
-      if (!automations.length) { list.innerHTML = templateHtml(); return; }
-      list.innerHTML = automations.map(function (item) {
-        return '<article class="pa-row" data-automation-id="' + item.id + '"><div class="pa-icon">' + iconSvg(item) + '</div><div><h2 class="pa-row-title">' + escapeHtml(item.name || "{% trans 'Untitled automation' %}") + '</h2><p class="pa-row-text">' + escapeHtml(triggerSummary(item)) + ' · ' + escapeHtml(item.instructions && (item.instructions.goal || item.instructions.instructions) || "{% trans 'No goal configured.' %}") + '</p></div><div class="pa-row-actions"><span class="pa-pill">' + escapeHtml(status(item.status)) + '</span><button type="button" class="pa-row-button pa-row-button-primary" data-action="run">{% trans "Run now" %}</button><button type="button" class="pa-row-button" data-action="history" aria-label="{% trans 'History' %}" title="{% trans 'History' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg></button><button type="button" class="pa-row-button" data-action="edit" aria-label="{% trans 'Edit' %}" title="{% trans 'Edit' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="m16.5 3.5 4 4L8 20l-5 1 1-5 12.5-12.5Z"/></svg></button><button type="button" class="pa-row-button pa-row-button-danger" data-action="delete" aria-label="{% trans 'Delete' %}" title="{% trans 'Delete' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button></div></article>';
+      if (!agenticTasks.length) { list.innerHTML = templateHtml(); return; }
+      list.innerHTML = agenticTasks.map(function (item) {
+        return '<article class="pa-row" data-automation-id="' + item.id + '"><div class="pa-icon">' + iconSvg(item) + '</div><div><h2 class="pa-row-title">' + escapeHtml(item.name || "{% trans 'Untitled task' %}") + '</h2><p class="pa-row-text">' + escapeHtml(triggerSummary(item)) + ' · ' + escapeHtml(item.instructions && (item.instructions.goal || item.instructions.instructions) || "{% trans 'No goal configured.' %}") + '</p></div><div class="pa-row-actions"><span class="pa-pill">' + escapeHtml(status(item.status)) + '</span><button type="button" class="pa-row-button pa-row-button-primary" data-action="run">{% trans "Run now" %}</button><button type="button" class="pa-row-button" data-action="history" aria-label="{% trans 'History' %}" title="{% trans 'History' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg></button><button type="button" class="pa-row-button" data-action="edit" aria-label="{% trans 'Edit' %}" title="{% trans 'Edit' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20h9"/><path d="m16.5 3.5 4 4L8 20l-5 1 1-5 12.5-12.5Z"/></svg></button><button type="button" class="pa-row-button pa-row-button-danger" data-action="delete" aria-label="{% trans 'Archive' %}" title="{% trans 'Archive' %}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg></button></div></article>';
       }).join("");
     }
     function renderRuns(focusId) {
-      var visible = focusId ? runs.filter(function (run) { return run.automationId === focusId; }) : runs;
-      if (runScope) runScope.textContent = focusId ? "{% trans 'Filtered to one automation.' %}" : "{% trans 'Latest background runs across all automations.' %}";
-      if (!visible.length) { runsEl.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "No automation runs yet." %}</p></div>'; return; }
+      var visible = focusId ? runs.filter(function (run) { return run.agenticTaskId === focusId; }) : runs;
+      if (runScope) runScope.textContent = focusId ? "{% trans 'Filtered to one Agentic Task.' %}" : "{% trans 'Latest runs across all Agentic Tasks.' %}";
+      if (!visible.length) { runsEl.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "No task runs yet." %}</p></div>'; return; }
       runsEl.innerHTML = visible.slice(0, 60).map(function (run) {
-        return '<article class="pa-run"><div class="pa-run-head"><div><h3 class="pa-run-title">' + escapeHtml(run.automationName || run.title || "{% trans 'Automation run' %}") + '</h3><div class="pa-run-time">' + escapeHtml(formatDate(run.createdAt) || "") + '</div></div><span class="pa-pill">' + escapeHtml(status(run.status)) + '</span></div>' + (run.errorDetail ? '<pre class="pa-error-box">' + escapeHtml(run.errorDetail) + '</pre>' : '') + '</article>';
+        return '<article class="pa-run"><div class="pa-run-head"><div><h3 class="pa-run-title">' + escapeHtml(run.agenticTaskName || run.title || "{% trans 'Task run' %}") + '</h3><div class="pa-run-time">' + escapeHtml(formatDate(run.createdAt) || "") + '</div></div><span class="pa-pill">' + escapeHtml(status(run.status)) + '</span></div>' + (run.errorDetail ? '<pre class="pa-error-box">' + escapeHtml(run.errorDetail) + '</pre>' : '') + '</article>';
       }).join("");
     }
     function loadOperations() {
@@ -278,37 +278,38 @@
       }).catch(function () { if (warning) warning.classList.remove("pa-hidden"); });
     }
     function load() {
-      if (!agentId) { renderAutomations(); renderRuns(); return Promise.resolve(); }
-      list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "Loading automations..." %}</p></div>';
-      return Promise.all([api("/api/agents/" + encodeURIComponent(agentId) + "/automations/"), api("/api/agents/" + encodeURIComponent(agentId) + "/runs/?kind=automation&limit=200"), loadOperations()]).then(function (payloads) {
-        automations = payloads[0].automations || []; runs = payloads[1].runs || []; renderAutomations(); renderRuns();
-      }).catch(function (error) { list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">' + escapeHtml(error.message || "Failed to load automations") + '</p></div>'; });
+      if (!agentId) { renderAgenticTasks(); renderRuns(); return Promise.resolve(); }
+      list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">{% trans "Loading Agentic Tasks..." %}</p></div>';
+      return Promise.all([api("/api/agents/" + encodeURIComponent(agentId) + "/agentic-tasks/"), api("/api/agents/" + encodeURIComponent(agentId) + "/runs/?kind=agentic_task&limit=200"), loadOperations()]).then(function (payloads) {
+        agenticTasks = payloads[0].agenticTasks || []; runs = payloads[1].runs || []; renderAgenticTasks(); renderRuns();
+      }).catch(function (error) { list.innerHTML = '<div class="pa-empty"><p class="pa-empty-text">' + escapeHtml(error.message || "Failed to load Agentic Tasks") + '</p></div>'; });
     }
     function payloadFromForm() {
-      var triggerType = field("triggerType").value || "schedule"; var autonomyMode = field("autonomyMode").value || "draft_for_approval";
-      var body = { kind: "automation", name: field("name").value.trim(), status: field("status").value || "active", triggerType: triggerType, autonomyMode: autonomyMode, reviewMode: autonomyMode === "full_autonomy_explicit" ? "none" : (autonomyMode === "draft_for_approval" ? "always" : "on_risk"), createSession: false, instructions: { goal: field("goal").value.trim() }, triggerConfig: {} };
+      var scheduleEnabled = !field("scheduleEnabled") || field("scheduleEnabled").value !== "false"; var autonomyMode = field("autonomyMode").value || "draft_for_approval";
+      var body = { name: field("name").value.trim(), status: field("status").value || "active", scheduleEnabled: scheduleEnabled, autonomyMode: autonomyMode, reviewMode: autonomyMode === "full_autonomy_explicit" ? "none" : (autonomyMode === "draft_for_approval" ? "always" : "on_risk"), instructions: { goal: field("goal").value.trim() }, scheduleConfig: {} };
       if (!body.name) throw new Error("{% trans 'Name is required.' %}");
-      if (triggerType === "schedule") body.triggerConfig = { type: "cron", cron: buildCron(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" };
+      if (scheduleEnabled) body.scheduleConfig = { type: "cron", cron: buildCron(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" };
       return body;
     }
     function save(event) {
       event.preventDefault(); if (!agentId) return; setError("");
       var body; try { body = payloadFromForm(); } catch (error) { setError(error.message); return; }
-      var id = field("id").value.trim(); var url = "/api/agents/" + encodeURIComponent(agentId) + "/automations/"; var method = "POST"; if (id) { url += encodeURIComponent(id) + "/"; method = "PATCH"; }
-      api(url, { method: method, body: JSON.stringify(body) }).then(function () { closeDrawer(); return load(); }).catch(function (error) { setError(error.message || "{% trans 'Failed to save automation.' %}"); });
+      var id = field("id").value.trim(); var url = "/api/agents/" + encodeURIComponent(agentId) + "/agentic-tasks/"; var method = "POST"; if (id) { url += encodeURIComponent(id) + "/"; method = "PATCH"; }
+      api(url, { method: method, body: JSON.stringify(body) }).then(function () { closeDrawer(); return load(); }).catch(function (error) { setError(error.message || "{% trans 'Failed to save task.' %}"); });
     }
-    function runNow(id) { if (!agentId || !id) return; api("/api/agents/" + encodeURIComponent(agentId) + "/automations/" + encodeURIComponent(id) + "/runs/", { method: "POST", body: JSON.stringify({}) }).then(load); }
-    function remove(id) { if (!agentId || !id) return; if (!window.confirm("{% trans 'Delete this automation?' %}")) return; api("/api/agents/" + encodeURIComponent(agentId) + "/automations/" + encodeURIComponent(id) + "/", { method: "DELETE" }).then(load); }
+    function runNow(id) { if (!agentId || !id) return; api("/api/agents/" + encodeURIComponent(agentId) + "/agentic-tasks/" + encodeURIComponent(id) + "/runs/", { method: "POST", body: JSON.stringify({}) }).then(load); }
+    function remove(id) { if (!agentId || !id) return; if (!window.confirm("{% trans 'Archive this task?' %}")) return; api("/api/agents/" + encodeURIComponent(agentId) + "/agentic-tasks/" + encodeURIComponent(id) + "/", { method: "DELETE" }).then(load); }
     if (form) form.addEventListener("submit", save);
     root.querySelector("[data-automation-refresh]").addEventListener("click", load);
     root.querySelector("[data-automation-new]").addEventListener("click", function () { resetForm(null); });
+    if (field("scheduleEnabled")) field("scheduleEnabled").addEventListener("change", showTriggerPanel);
     root.querySelector("[data-runs-clear]").addEventListener("click", function () { renderRuns(); });
     root.querySelectorAll("[data-automation-close]").forEach(function (button) { button.addEventListener("click", closeDrawer); });
     if (list) list.addEventListener("click", function (event) {
       var templateButton = event.target && event.target.closest ? event.target.closest("[data-template-index]") : null;
       if (templateButton) { resetForm(templates[Number(templateButton.getAttribute("data-template-index"))] || null); return; }
       var button = event.target && event.target.closest ? event.target.closest("[data-action]") : null; if (!button) return;
-      var card = button.closest("[data-automation-id]"); var id = card ? card.getAttribute("data-automation-id") : ""; var item = automations.find(function (candidate) { return candidate && candidate.id === id; }); var action = button.getAttribute("data-action");
+      var card = button.closest("[data-automation-id]"); var id = card ? card.getAttribute("data-automation-id") : ""; var item = agenticTasks.find(function (candidate) { return candidate && candidate.id === id; }); var action = button.getAttribute("data-action");
       if (action === "edit") edit(item); if (action === "delete") remove(id); if (action === "run") runNow(id); if (action === "history") renderRuns(id);
     });
     document.addEventListener("keydown", function (event) { if (event.key === "Escape") closeDrawer(); });

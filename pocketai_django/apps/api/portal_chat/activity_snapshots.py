@@ -18,8 +18,10 @@ from apps.agent_runs.models import (
     AgentRunSource,
     AgentRunStatus,
 )
-from apps.automations.models import Automation, AutomationTriggerType
-from apps.conversations.models import AgentRequest, Conversation
+from apps.agentic_tasks.models import AgenticTask
+from apps.agentic_tasks.processing import ACTIVE_RUN_STATUSES, ensure_task_conversation
+from apps.api.portal_chat.serializers import _message_to_dict
+from apps.conversations.models import AgentRequest, Conversation, ConversationMessage
 from apps.conversations.portal_session.serializers import (
     serialize_agent_run_checkpoint_for_portal,
     serialize_agent_run_event_for_portal,
@@ -44,34 +46,38 @@ def _serialize_agent_run_checkpoint_for_portal(checkpoint: AgentRunCheckpoint | 
     return serialize_agent_run_checkpoint_for_portal(checkpoint)
 
 
-def _serialize_automation_for_portal(
-    automation: Automation,
+def _serialize_agentic_task_for_portal(
+    agentic_task: AgenticTask,
     *,
     latest_run: AgentRun | None = None,
     open_checkpoint: AgentRunCheckpoint | None = None,
     recent_runs: list[AgentRun] | None = None,
+    messages: list[ConversationMessage] | None = None,
 ) -> dict[str, object]:
     return {
-        "id": str(automation.id),
-        "agentId": str(automation.agent_profile_id),
-        "agentName": getattr(getattr(automation, "agent_profile", None), "name", "") or "",
-        "name": automation.name,
-        "description": automation.description or "",
-        "status": automation.status,
-        "triggerType": automation.trigger_type,
-        "nextTriggerAt": automation.next_trigger_at.isoformat() if automation.next_trigger_at else None,
-        "lastTriggeredAt": automation.last_triggered_at.isoformat() if automation.last_triggered_at else None,
+        "id": str(agentic_task.id),
+        "agentId": str(agentic_task.agent_profile_id),
+        "agentName": getattr(getattr(agentic_task, "agent_profile", None), "name", "") or "",
+        "activeConversationId": str(agentic_task.active_conversation_id) if agentic_task.active_conversation_id else None,
+        "name": agentic_task.name,
+        "description": agentic_task.description or "",
+        "status": agentic_task.status,
+        "scheduleEnabled": bool(agentic_task.schedule_enabled),
+        "scheduleConfig": agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {},
+        "nextTriggerAt": agentic_task.next_trigger_at.isoformat() if agentic_task.next_trigger_at else None,
+        "lastTriggeredAt": agentic_task.last_triggered_at.isoformat() if agentic_task.last_triggered_at else None,
         "latestRun": _serialize_agent_run_for_portal(latest_run) if latest_run else None,
         "openCheckpoint": _serialize_agent_run_checkpoint_for_portal(open_checkpoint),
-        "recentRuns": [_serialize_agent_run_for_portal(item) for item in (recent_runs or [])[:5]],
-        "attentionState": "needs_attention" if open_checkpoint else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else automation.status),
-        "createdAt": automation.created_at.isoformat() if automation.created_at else None,
-        "updatedAt": automation.updated_at.isoformat() if automation.updated_at else None,
+        "recentRuns": [_serialize_agent_run_for_portal(item) for item in (recent_runs or [])[:10]],
+        "messages": [_message_to_dict(item) for item in (messages or [])[-40:]],
+        "attentionState": "needs_attention" if open_checkpoint else ("active" if latest_run and latest_run.status in {AgentRunStatus.QUEUED, AgentRunStatus.RUNNING, AgentRunStatus.WAITING_CHILD, AgentRunStatus.WAITING_EXTERNAL} else agentic_task.status),
+        "createdAt": agentic_task.created_at.isoformat() if agentic_task.created_at else None,
+        "updatedAt": agentic_task.updated_at.isoformat() if agentic_task.updated_at else None,
     }
 
 
-def _is_runnable_automation(automation: Automation) -> bool:
-    return bool(automation and automation.trigger_type in {choice for choice, _ in AutomationTriggerType.choices})
+def _is_runnable_agentic_task(agentic_task: AgenticTask) -> bool:
+    return bool(agentic_task and agentic_task.status != "archived")
 
 
 def _serialize_agent_run_event_for_portal(event: AgentRunEvent) -> dict[str, object]:
@@ -101,48 +107,50 @@ def _append_agent_run_event(
         )
 
 
-def _run_snapshot_for_portal_run(automation: Automation) -> dict[str, Any]:
-    instructions = automation.instructions if isinstance(getattr(automation, "instructions", None), dict) else {}
+def _run_snapshot_for_portal_run(agentic_task: AgenticTask) -> dict[str, Any]:
+    instructions = agentic_task.instructions if isinstance(getattr(agentic_task, "instructions", None), dict) else {}
     return normalize_workflow_instructions(
         {
             **instructions,
-            "name": automation.name,
-            "description": automation.description,
-            "trigger_type": automation.trigger_type,
-            "trigger_config": automation.trigger_config if isinstance(automation.trigger_config, dict) else {},
-            "source_config": automation.source_config if isinstance(automation.source_config, dict) else {},
-            "destination_config": automation.destination_config if isinstance(automation.destination_config, dict) else {},
-            "notification_config": automation.notification_config if isinstance(automation.notification_config, dict) else {},
-            "review_mode": automation.review_mode,
-            "autonomy_mode": automation.autonomy_mode,
+            "name": agentic_task.name,
+            "description": agentic_task.description,
+            "schedule_enabled": agentic_task.schedule_enabled,
+            "schedule_config": agentic_task.schedule_config if isinstance(agentic_task.schedule_config, dict) else {},
+            "review_mode": agentic_task.review_mode,
+            "autonomy_mode": agentic_task.autonomy_mode,
         }
     )
 
 
-def _create_portal_manual_automation_run(
+def _create_portal_manual_agentic_task_run(
     *,
-    automation: Automation,
+    agentic_task: AgenticTask,
     created_by,
     portal_conversation: Conversation,
 ) -> AgentRun:
-    conversation = automation.conversation or portal_conversation
-    snapshot = _run_snapshot_for_portal_run(automation)
+    active_run = AgentRun.objects.filter(agentic_task=agentic_task, status__in=ACTIVE_RUN_STATUSES).order_by("-created_at").first()
+    if active_run is not None:
+        return active_run
+    conversation = ensure_task_conversation(agentic_task)
+    snapshot = _run_snapshot_for_portal_run(agentic_task)
     run = AgentRun.objects.create(
-        business_profile=automation.business_profile,
-        agent_profile=automation.agent_profile,
+        business_profile=agentic_task.business_profile,
+        agent_profile=agentic_task.agent_profile,
         conversation=conversation,
+        execution_conversation=conversation,
         created_by=created_by,
-        automation=automation,
+        agentic_task=agentic_task,
         run_snapshot=snapshot,
-        title=(automation.name or snapshot.get("name") or snapshot.get("goal") or "Automation run")[:200],
-        source=AgentRunSource.AUTOMATION,
+        title=(agentic_task.name or snapshot.get("name") or snapshot.get("goal") or "AgenticTask run")[:200],
+        source=AgentRunSource.TASK,
         status=AgentRunStatus.QUEUED,
-        visibility=automation.visibility,
+        visibility=agentic_task.visibility,
         metadata={
-            "automation_id": str(automation.id),
+            "agentic_task_id": str(agentic_task.id),
             "trigger": "manual",
             "trigger_source": "portal_task_panel",
             "portal_conversation_id": str(portal_conversation.id),
+            "task_conversation_id": str(conversation.id),
         },
         run_after=timezone.now(),
     )
@@ -153,9 +161,10 @@ def _create_portal_manual_automation_run(
         label="Queued",
         payload={
             "status": AgentRunStatus.QUEUED,
-            "automation_id": str(automation.id),
+            "agentic_task_id": str(agentic_task.id),
             "trigger": "manual",
             "trigger_source": "portal_task_panel",
+            "task_conversation_id": str(conversation.id),
         },
     )
     return run
@@ -183,67 +192,78 @@ def _build_portal_agent_runs_snapshot(
     }
 
     with tenant_context(business_id):
-        automation_agents: list[dict[str, object]] = []
+        agentic_task_agents: list[dict[str, object]] = []
         if agent_profile_id:
-            automations = list(
-                Automation.objects.filter(
+            agentic_tasks = list(
+                AgenticTask.objects.filter(
                     business_profile_id=business_id,
                     agent_profile_id=agent_profile_id,
                 )
                 .select_related("agent_profile")
                 .order_by("-updated_at", "-created_at")[:100]
             )
-            automation_ids = [automation.id for automation in automations]
+            agentic_task_ids = [agentic_task.id for agentic_task in agentic_tasks]
             latest_runs: dict[uuid.UUID, AgentRun] = {}
-            recent_runs_by_automation: dict[uuid.UUID, list[AgentRun]] = {}
+            recent_runs_by_agentic_task: dict[uuid.UUID, list[AgentRun]] = {}
             open_checkpoints: dict[uuid.UUID, AgentRunCheckpoint] = {}
-            if automation_ids:
+            if agentic_task_ids:
                 for run in (
-                    AgentRun.objects.select_related("automation")
+                    AgentRun.objects.select_related("agentic_task")
                     .filter(
-                        automation_id__in=automation_ids,
+                        agentic_task_id__in=agentic_task_ids,
                         business_profile_id=business_id,
                         agent_profile_id=agent_profile_id,
                     )
                     .order_by("-created_at")[:500]
                 ):
-                    if run.automation_id:
-                        recent_runs_by_automation.setdefault(run.automation_id, []).append(run)
-                        latest_runs.setdefault(run.automation_id, run)
+                    if run.agentic_task_id:
+                        recent_runs_by_agentic_task.setdefault(run.agentic_task_id, []).append(run)
+                        latest_runs.setdefault(run.agentic_task_id, run)
                 for checkpoint in (
                     AgentRunCheckpoint.objects.filter(
-                        automation_id__in=automation_ids,
+                        agentic_task_id__in=agentic_task_ids,
                         status=AgentRunCheckpointStatus.OPEN,
                     )
                     .order_by("-updated_at", "-created_at")[:300]
                 ):
-                    if checkpoint.automation_id and checkpoint.automation_id not in open_checkpoints:
-                        open_checkpoints[checkpoint.automation_id] = checkpoint
-            automation_agents = [
-                _serialize_automation_for_portal(
-                    automation,
-                    latest_run=latest_runs.get(automation.id),
-                    open_checkpoint=open_checkpoints.get(automation.id),
+                    if checkpoint.agentic_task_id and checkpoint.agentic_task_id not in open_checkpoints:
+                        open_checkpoints[checkpoint.agentic_task_id] = checkpoint
+            messages_by_conversation: dict[uuid.UUID, list[ConversationMessage]] = {}
+            conversation_ids = [task.active_conversation_id for task in agentic_tasks if task.active_conversation_id]
+            if conversation_ids:
+                for message in (
+                    ConversationMessage.objects.filter(conversation_id__in=conversation_ids)
+                    .order_by("conversation_id", "-sent_at", "-created_at")[:4000]
+                ):
+                    messages_by_conversation.setdefault(message.conversation_id, []).append(message)
+                for conversation_id, messages in list(messages_by_conversation.items()):
+                    messages_by_conversation[conversation_id] = list(reversed(messages[:40]))
+            agentic_task_agents = [
+                _serialize_agentic_task_for_portal(
+                    agentic_task,
+                    latest_run=latest_runs.get(agentic_task.id),
+                    open_checkpoint=open_checkpoints.get(agentic_task.id),
                     recent_runs=[
                         run
-                        for run in recent_runs_by_automation.get(automation.id, [])
+                        for run in recent_runs_by_agentic_task.get(agentic_task.id, [])
                         if run.status in live_statuses
                     ],
+                    messages=messages_by_conversation.get(agentic_task.active_conversation_id, []) if agentic_task.active_conversation_id else [],
                 )
-                for automation in automations
+                for agentic_task in agentic_tasks
             ]
 
         runs = list(
-            AgentRun.objects.select_related("automation")
-            .filter(conversation_id=conversation_id, automation_id__isnull=True)
+            AgentRun.objects.select_related("agentic_task")
+            .filter(conversation_id=conversation_id, agentic_task_id__isnull=True)
             .order_by("-created_at")[:runs_limit]
         )
         # The activity panel renders all runs in this snapshot. Include the
         # persisted event log for those visible runs so completed tasks can
         # still rebuild their "Worked for ..." activity after a refresh.
         run_ids = [run.id for run in runs]
-        for automation in automation_agents:
-            for item in [automation.get("latestRun"), *(automation.get("recentRuns") or [])]:
+        for agentic_task in agentic_task_agents:
+            for item in [agentic_task.get("latestRun"), *(agentic_task.get("recentRuns") or [])]:
                 if isinstance(item, dict) and item.get("id"):
                     run_id_value = str(item.get("id") or "").strip()
                     try:
@@ -280,7 +300,7 @@ def _build_portal_agent_runs_snapshot(
         return {
             "conversationId": str(conversation_id),
             "runs": [_serialize_agent_run_for_portal(run) for run in runs],
-            "automations": automation_agents,
+            "agenticTasks": agentic_task_agents,
             "eventsByRun": events_by_run,
             "cursor": {"since": cursor_value},
         }

@@ -183,17 +183,17 @@ def _build_run_memory_context(
     try:
         from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryStatus
 
-        run = AgentRun.objects.filter(id=run_id).select_related("automation").first()
+        run = AgentRun.objects.filter(id=run_id).select_related("agentic_task").first()
         run_items = list(
             MemoryItem.objects.filter(run_id=run_id, scope=MemoryScope.RUN, status=MemoryStatus.ACTIVE)
             .order_by("-created_at")
             .only("kind", "key", "content", "created_at")[:max_items]
         )
         workflow_items = []
-        if run is not None and getattr(run, "automation_id", None):
+        if run is not None and getattr(run, "agentic_task_id", None):
             workflow_cap = max(0, int(getattr(settings, "MCP_RUN_MEMORY_WORKFLOW_SCOPE_MAX_ITEMS", 20) or 20))
             workflow_items = list(
-                MemoryItem.objects.filter(automation_id=run.automation_id, scope=MemoryScope.AUTOMATION, status=MemoryStatus.ACTIVE)
+                MemoryItem.objects.filter(agentic_task_id=run.agentic_task_id, scope=MemoryScope.TASK, status=MemoryStatus.ACTIVE)
                 .order_by("-updated_at", "-created_at")
                 .only("kind", "key", "content", "created_at")[:workflow_cap]
             )
@@ -202,9 +202,9 @@ def _build_run_memory_context(
         return None
 
     workflow_state_note = ""
-    if "run" in locals() and run is not None and getattr(run, "automation_id", None):
-        automation = getattr(run, "automation", None)
-        state = getattr(automation, "state", None) if automation is not None else None
+    if "run" in locals() and run is not None and getattr(run, "agentic_task_id", None):
+        agentic_task = getattr(run, "agentic_task", None)
+        state = getattr(agentic_task, "state", None) if agentic_task is not None else None
         if isinstance(state, Mapping) and state:
             try:
                 workflow_state_note = json.dumps(state, ensure_ascii=False, sort_keys=True)[:5000]
@@ -489,14 +489,14 @@ def _recent_search_refs_note(conversation: Conversation, *, limit: int = 6) -> s
     return "\n".join(lines).strip()
 
 
-def _automation_resource_refs_note(conversation: Conversation, *, limit: int = 8) -> str | None:
+def _agentic_task_resource_refs_note(conversation: Conversation, *, limit: int = 8) -> str | None:
     metadata = conversation.metadata if isinstance(getattr(conversation, "metadata", None), Mapping) else {}
     refs_raw = metadata.get("resource_refs")
     if not isinstance(refs_raw, list):
         refs_raw = []
 
-    pending_id = str(metadata.get("pending_automation_activation_id") or "").strip()
-    automation_refs: list[Mapping[str, object]] = []
+    pending_id = str(metadata.get("pending_agentic_task_activation_id") or "").strip()
+    agentic_task_refs: list[Mapping[str, object]] = []
     seen: set[str] = set()
 
     def _add_ref(ref: Mapping[str, object]) -> None:
@@ -504,20 +504,20 @@ def _automation_resource_refs_note(conversation: Conversation, *, limit: int = 8
         if not ref_id or ref_id in seen:
             return
         ref_type = str(ref.get("type") or "").strip().lower()
-        if ref_type not in {"automation", "task"}:
+        if ref_type not in {"agentic_task", "task"}:
             return
         seen.add(ref_id)
-        automation_refs.append(ref)
+        agentic_task_refs.append(ref)
 
     for item in refs_raw:
         if isinstance(item, Mapping):
             _add_ref(item)
 
     if pending_id and pending_id not in seen:
-        automation_refs.insert(
+        agentic_task_refs.insert(
             0,
             {
-                "type": "automation",
+                "type": "agentic_task",
                 "id": pending_id,
                 "name": "",
                 "status": "draft",
@@ -526,32 +526,32 @@ def _automation_resource_refs_note(conversation: Conversation, *, limit: int = 8
         )
         seen.add(pending_id)
 
-    if not automation_refs:
+    if not agentic_task_refs:
         return None
 
-    pending_refs = [ref for ref in automation_refs if str(ref.get("id") or "").strip() == pending_id]
-    other_refs = [ref for ref in automation_refs if str(ref.get("id") or "").strip() != pending_id]
+    pending_refs = [ref for ref in agentic_task_refs if str(ref.get("id") or "").strip() == pending_id]
+    other_refs = [ref for ref in agentic_task_refs if str(ref.get("id") or "").strip() != pending_id]
     ordered_refs = [*pending_refs, *other_refs][: max(1, int(limit))]
 
     lines = [
-        "Known automation/task references for this conversation.",
-        "Use these exact ids when calling task/automation tools; never invent or approximate UUIDs.",
+        "Known Agentic Task references for this conversation.",
+        "Use these exact ids when calling Agentic Task tools; never invent or approximate UUIDs.",
     ]
     for ref in ordered_refs:
         ref_id = str(ref.get("id") or "").strip()
         if not ref_id:
             continue
-        name = str(ref.get("name") or "Untitled automation").strip()[:160]
+        name = str(ref.get("name") or "Untitled Agentic Task").strip()[:160]
         status = str(ref.get("status") or "").strip()
         purpose = str(ref.get("purpose") or "").strip()
-        trigger_type = str(ref.get("trigger_type") or ref.get("triggerType") or "").strip()
+        schedule_enabled = ref.get("schedule_enabled")
         label_parts = [name, f"id={ref_id}"]
         if status:
             label_parts.append(f"status={status}")
         if purpose:
             label_parts.append(f"purpose={purpose}")
-        if trigger_type:
-            label_parts.append(f"trigger={trigger_type}")
+        if schedule_enabled is not None:
+            label_parts.append(f"schedule_enabled={bool(schedule_enabled)}")
         if ref_id == pending_id:
             label_parts.append("pending_activation=true")
         lines.append("- " + "; ".join(label_parts))

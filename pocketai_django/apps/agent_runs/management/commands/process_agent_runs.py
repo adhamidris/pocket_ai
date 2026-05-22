@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = "Process queued agent runs (background executions)."
+    help = "Process queued sub-agent runs for normal or task conversations."
 
     def log_queue_health(self) -> None:
         """Log queue health metrics for monitoring."""
@@ -108,6 +108,7 @@ class Command(BaseCommand):
             lease_seconds=float(options.get("lease_seconds") or 60.0),
             max_stale_requeues_per_pass=int(options.get("max_stale_requeues") or 25),
             max_retry_delay_seconds=float(options.get("max_retry_delay_seconds") or 900.0),
+            run_kind="sub_agent",
         )
 
         # Log initial queue health
@@ -119,7 +120,7 @@ class Command(BaseCommand):
         processed = 0
         idle_notified = False
         while True:
-            cache.set("agent_run_processor_heartbeat", {"at": timezone.now().isoformat()}, timeout=180)
+            cache.set("sub_agent_run_processor_heartbeat", {"at": timezone.now().isoformat()}, timeout=180)
             if max_runs is not None and processed >= int(max_runs):
                 break
 

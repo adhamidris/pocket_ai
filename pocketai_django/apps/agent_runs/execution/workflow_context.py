@@ -11,10 +11,10 @@ from apps.conversations.models import MemoryItem, MemoryScope, MemoryStatus
 class AgentRunWorkflowContextMixin:
 
     def _build_workflow_runtime_context(self, run: AgentRun) -> str:
-        automation = getattr(run, "automation", None)
-        if not automation:
+        agentic_task = getattr(run, "agentic_task", None)
+        if not agentic_task:
             return ""
-        instructions = automation.instructions if isinstance(getattr(automation, "instructions", None), Mapping) else {}
+        instructions = agentic_task.instructions if isinstance(getattr(agentic_task, "instructions", None), Mapping) else {}
         snapshot = run.run_snapshot if isinstance(getattr(run, "run_snapshot", None), Mapping) else {}
         instruction_source = dict(snapshot)
         instruction_source.update(dict(instructions))
@@ -27,15 +27,14 @@ class AgentRunWorkflowContextMixin:
             or ""
         ).strip()
         memory_instructions = str(instruction_source.get("memory_instructions") or "").strip()
-        state = automation.state if isinstance(getattr(automation, "state", None), Mapping) else {}
-        notification_config = automation.notification_config if isinstance(getattr(automation, "notification_config", None), Mapping) else {}
+        state = agentic_task.state if isinstance(getattr(agentic_task, "state", None), Mapping) else {}
         recent_memories = list(
-            MemoryItem.objects.filter(automation=automation, scope=MemoryScope.AUTOMATION, status=MemoryStatus.ACTIVE)
+            MemoryItem.objects.filter(agentic_task=agentic_task, scope=MemoryScope.TASK, status=MemoryStatus.ACTIVE)
             .order_by("-updated_at", "-created_at")
             .only("kind", "key", "content", "payload", "updated_at")[:20]
         )
         recent_runs = list(
-            AgentRun.objects.filter(automation=automation)
+            AgentRun.objects.filter(agentic_task=agentic_task)
             .exclude(id=run.id)
             .exclude(status=AgentRunStatus.CANCELLED)
             .order_by("-created_at")
@@ -43,7 +42,7 @@ class AgentRunWorkflowContextMixin:
         )
         pending = list(
             AgentRun.objects.filter(
-                automation=automation,
+                agentic_task=agentic_task,
                 status__in=[AgentRunStatus.WAITING_APPROVAL, AgentRunStatus.WAITING_USER, AgentRunStatus.WAITING_EXTERNAL],
             )
             .exclude(id=run.id)
@@ -52,12 +51,12 @@ class AgentRunWorkflowContextMixin:
         )
         lines: list[str] = [
             "Workflow runtime packet.",
-            f"- automation_id: {automation.id}",
-            f"- automation_name: {automation.name}",
+            f"- agentic_task_id: {agentic_task.id}",
+            f"- agentic_task_name: {agentic_task.name}",
             "- workflow_agent_scope: main_agent",
-            f"- responsible_agent_id: {automation.agent_profile_id}",
-            f"- review_mode: {automation.review_mode}",
-            f"- autonomy_mode: {automation.autonomy_mode}",
+            f"- responsible_agent_id: {agentic_task.agent_profile_id}",
+            f"- review_mode: {agentic_task.review_mode}",
+            f"- autonomy_mode: {agentic_task.autonomy_mode}",
         ]
         if instruction_source.get("workflow_type") or instruction_source.get("memory_shape"):
             lines.append(
@@ -81,8 +80,8 @@ class AgentRunWorkflowContextMixin:
             lines.append(_clip_text(str((run.run_snapshot or {}).get("goal") or run.title or "Continue this workflow."), 12000))
         lines.append("")
         lines.append("Always review workflow_memory before using tools. Do not repeat completed work or reprocess tracked items unless there is a clear reason.")
-        lines.append("If nothing materially changed from workflow memory/state, complete with status=no_change and notification_candidate=null.")
-        lines.append("Do not repeat a prior notification or approval request when the same entity is in the same meaningful state.")
+        lines.append("If nothing materially changed from workflow memory/state, still complete with a concise user-facing update.")
+        lines.append("Do not repeat a prior approval request when the same entity is in the same meaningful state.")
         if memory_instructions:
             lines.append("")
             lines.append("Memory instructions:")
@@ -113,10 +112,6 @@ class AgentRunWorkflowContextMixin:
             memory_lines.append("<workflow_state_json>")
             memory_lines.append(_clip_text(json.dumps(_json_safe(state_subset), ensure_ascii=False, sort_keys=True), 3000))
             memory_lines.append("</workflow_state_json>")
-        if notification_config:
-            memory_lines.append("<notification_policy_json>")
-            memory_lines.append(_clip_text(json.dumps(_json_safe(notification_config), ensure_ascii=False, sort_keys=True), 2200))
-            memory_lines.append("</notification_policy_json>")
         if recent_memories:
             memory_lines.append("<workflow_memory_items>")
             for item in recent_memories:

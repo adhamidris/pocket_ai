@@ -191,19 +191,21 @@ def _sanitize_task_payload(task: object) -> dict[str, object] | None:
     if not isinstance(task, Mapping):
         return None
     out: dict[str, object] = {}
-    for key in ("id", "agent_id", "name", "status", "visibility", "trigger_type", "next_trigger_at", "last_triggered_at"):
+    for key in ("id", "agent_id", "active_conversation_id", "name", "status", "visibility", "next_trigger_at", "last_triggered_at"):
         value = task.get(key)
         if isinstance(value, str) and value.strip():
             out[key] = _clip_text(value.strip(), 240)
-    trigger_config = task.get("trigger_config")
-    if isinstance(trigger_config, Mapping):
-        compact_trigger: dict[str, object] = {}
+    if "schedule_enabled" in task:
+        out["schedule_enabled"] = bool(task.get("schedule_enabled"))
+    schedule_config = task.get("schedule_config")
+    if isinstance(schedule_config, Mapping):
+        compact_schedule: dict[str, object] = {}
         for key in ("type", "cron", "timezone"):
-            value = trigger_config.get(key)
+            value = schedule_config.get(key)
             if isinstance(value, str) and value.strip():
-                compact_trigger[key] = _clip_text(value.strip(), 120)
-        if compact_trigger:
-            out["trigger_config"] = compact_trigger
+                compact_schedule[key] = _clip_text(value.strip(), 120)
+        if compact_schedule:
+            out["schedule_config"] = compact_schedule
     last_error = str(task.get("last_error") or "").strip()
     if last_error:
         out["last_error"] = _clip_text(last_error, 240)
@@ -273,7 +275,7 @@ def _sanitize_tool_output(tool_name: str, output: object) -> dict[str, object] |
         return out
 
     if normalized == "list_tasks":
-        tasks = output.get("tasks")
+        tasks = output.get("agentic_tasks")
         if isinstance(tasks, list):
             compact_tasks = []
             for task in tasks[:10]:
@@ -286,10 +288,10 @@ def _sanitize_tool_output(tool_name: str, output: object) -> dict[str, object] |
                 out["truncated"] = True
         return out
 
-    if normalized in {"draft_task", "update_task", "request_task_activation", "pause_task"}:
-        task = _sanitize_task_payload(output.get("task"))
+    if normalized in {"draft_agentic_task", "update_agentic_task", "request_agentic_task_activation", "pause_agentic_task"}:
+        task = _sanitize_task_payload(output.get("agentic_task"))
         if task:
-            out["task"] = task
+            out["agentic_task"] = task
         if "activated" in output:
             out["activated"] = bool(output.get("activated"))
         return out

@@ -9,10 +9,10 @@ MEMORY_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
 
     _function_schema(
         name="search_memory",
-        description="Search scoped long-term memory for relevant facts, preferences, decisions, or automation state.",
+        description="Search scoped long-term memory for relevant facts, preferences, decisions, or agentic_task state.",
         properties={
             "query": {"type": "string", "description": "Search text."},
-            "scope": {"type": "string", "enum": ["workspace", "agent", "automation", "run", "conversation", "crm_contact", "crm_company"]},
+            "scope": {"type": "string", "enum": ["workspace", "agent", "agentic_task", "run", "conversation", "crm_contact", "crm_company"]},
             "limit": {"type": "integer", "minimum": 1, "maximum": 20},
         },
         required=("query",),
@@ -23,7 +23,7 @@ MEMORY_TOOL_DEFINITIONS: tuple[Mapping[str, object], ...] = (
         properties={
             "content": {"type": "string", "description": "Memory content."},
             "kind": {"type": "string", "enum": ["fact", "preference", "policy", "decision", "instruction", "relationship", "state_note", "artifact_ref", "extracted_data"]},
-            "scope": {"type": "string", "enum": ["workspace", "agent", "automation", "run", "conversation"]},
+            "scope": {"type": "string", "enum": ["workspace", "agent", "agentic_task", "run", "conversation"]},
             "key": {"type": "string"},
             "sensitivity": {"type": "string", "enum": ["normal", "sensitive", "secret"]},
             "visibility": {"type": "string", "enum": ["private", "shared"]},

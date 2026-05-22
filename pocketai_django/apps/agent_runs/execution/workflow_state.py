@@ -5,7 +5,7 @@ from typing import Mapping
 
 from apps.agent_runs.execution.audit import _clip_text, _coerce_list, _json_safe, _merge_unique
 from apps.agent_runs.models import AgentRun
-from apps.automations.models import Automation
+from apps.agentic_tasks.models import AgenticTask
 from apps.conversations.models import MemoryItem, MemoryKind, MemoryScope, MemoryStatus
 
 
@@ -17,14 +17,12 @@ class AgentRunWorkflowStateMixin:
     def _update_workflow_state_from_report(
         self,
         *,
-        automation: Automation,
+        agentic_task: AgenticTask,
         run: AgentRun,
         report: Mapping[str, object],
-        dedupe_key: str,
-        duplicate: bool,
         now,
     ) -> None:
-        state = dict(automation.state or {}) if isinstance(getattr(automation, "state", None), Mapping) else {}
+        state = dict(agentic_task.state or {}) if isinstance(getattr(agentic_task, "state", None), Mapping) else {}
         history = state.get("recent_run_reports")
         if not isinstance(history, list):
             history = []
@@ -34,8 +32,6 @@ class AgentRunWorkflowStateMixin:
             "status": report.get("status"),
             "objective": _clip_text(report.get("objective"), 300),
             "confidence": report.get("confidence"),
-            "dedupe_key": dedupe_key,
-            "duplicate": duplicate,
             "recommended_next_step": _clip_text(report.get("recommended_next_step"), 500),
         }
         history.insert(0, compact_report)
@@ -43,24 +39,19 @@ class AgentRunWorkflowStateMixin:
         state["last_run_report"] = compact_report
         state["last_changed_entities"] = report.get("changed_entities") if isinstance(report.get("changed_entities"), list) else []
         state["workflow_memory"] = self._merge_workflow_memory(
-            automation=automation,
+            agentic_task=agentic_task,
             run=run,
             previous=state.get("workflow_memory"),
             report=report,
             now=now,
         )
-        notification_history = state.get("notification_history")
-        if not isinstance(notification_history, list):
-            notification_history = []
-        notification_history.insert(0, {"run_id": str(run.id), "at": now.isoformat(), "dedupe_key": dedupe_key, "duplicate": duplicate})
-        state["notification_history"] = notification_history[:50]
-        Automation.objects.filter(id=automation.id).update(state=state, updated_at=now)
-        automation.state = state
+        AgenticTask.objects.filter(id=agentic_task.id).update(state=state, updated_at=now)
+        agentic_task.state = state
 
     def _merge_workflow_memory(
         self,
         *,
-        automation: Automation,
+        agentic_task: AgenticTask,
         run: AgentRun,
         previous: object,
         report: Mapping[str, object],
@@ -68,8 +59,8 @@ class AgentRunWorkflowStateMixin:
     ) -> dict[str, object]:
         memory = dict(previous or {}) if isinstance(previous, Mapping) else {}
         update = report.get("memory_update") if isinstance(report.get("memory_update"), Mapping) else {}
-        instructions = automation.instructions if isinstance(getattr(automation, "instructions", None), Mapping) else {}
-        metadata = automation.metadata if isinstance(getattr(automation, "metadata", None), Mapping) else {}
+        instructions = agentic_task.instructions if isinstance(getattr(agentic_task, "instructions", None), Mapping) else {}
+        metadata = agentic_task.metadata if isinstance(getattr(agentic_task, "metadata", None), Mapping) else {}
         memory_shape = str(instructions.get("memory_shape") or metadata.get("memory_shape") or "general").strip() or "general"
         memory["memory_shape"] = memory_shape
         memory["last_updated_at"] = now.isoformat()
@@ -130,7 +121,7 @@ class AgentRunWorkflowStateMixin:
         )
         memory["recent_updates"] = recent_updates[:10]
 
-        self._upsert_workflow_memory_item(automation=automation, run=run, memory=memory, now=now)
+        self._upsert_workflow_memory_item(agentic_task=agentic_task, run=run, memory=memory, now=now)
         return _json_safe(memory, fallback={}) if isinstance(memory, dict) else {}
 
     def _email_memory_from_tool_trace(self, actions_taken: object, run: AgentRun) -> tuple[list[str], list[str]]:
@@ -162,7 +153,7 @@ class AgentRunWorkflowStateMixin:
     def _upsert_workflow_memory_item(
         self,
         *,
-        automation: Automation,
+        agentic_task: AgenticTask,
         run: AgentRun,
         memory: Mapping[str, object],
         now,
@@ -177,12 +168,12 @@ class AgentRunWorkflowStateMixin:
         content = " | ".join(part for part in content_parts if part)
         try:
             MemoryItem.objects.update_or_create(
-                business_profile=automation.business_profile,
-                automation=automation,
-                scope=MemoryScope.AUTOMATION,
+                business_profile=agentic_task.business_profile,
+                agentic_task=agentic_task,
+                scope=MemoryScope.TASK,
                 key="workflow_compact_journal",
                 defaults={
-                    "agent_profile": automation.agent_profile,
+                    "agent_profile": agentic_task.agent_profile,
                     "run": run,
                     "kind": MemoryKind.STATE_NOTE,
                     "content": _clip_text(content, 4000),
@@ -194,4 +185,4 @@ class AgentRunWorkflowStateMixin:
                 },
             )
         except Exception:  # pragma: no cover - memory writeback should not break run completion
-            logger.exception("workflow_memory_item_upsert_failed automation=%s run=%s", automation.id, run.id)
+            logger.exception("workflow_memory_item_upsert_failed agentic_task=%s run=%s", agentic_task.id, run.id)

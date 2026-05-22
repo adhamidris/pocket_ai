@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('accounts', '0001_initial'),
         ('agent_runs', '0002_initial'),
-        ('automations', '0001_initial'),
+        ('agentic_tasks', '0001_initial'),
         ('conversations', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
@@ -21,7 +21,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='agentrun',
             name='conversation',
-            field=models.ForeignKey(blank=True, help_text='Optional anchor conversation for chat-originated or automation-associated runs.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='agent_runs', to='conversations.conversation'),
+            field=models.ForeignKey(blank=True, help_text='Optional anchor conversation for chat-originated or agentic_task-associated runs.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='agent_runs', to='conversations.conversation'),
         ),
         migrations.AddField(
             model_name='agentrun',
@@ -55,8 +55,8 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='agentruncheckpoint',
-            name='automation',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='checkpoints', to='automations.automation'),
+            name='agentic_task',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='checkpoints', to='agentic_tasks.agentictask'),
         ),
         migrations.AddField(
             model_name='agentruncheckpoint',
@@ -100,8 +100,8 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='agentrunnotification',
-            name='automation',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='notifications', to='automations.automation'),
+            name='agentic_task',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='notifications', to='agentic_tasks.agentictask'),
         ),
         migrations.AddField(
             model_name='agentrunnotification',
@@ -149,7 +149,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='agentrun',
-            index=models.Index(fields=['automation', 'created_at'], name='run_automation_created_idx'),
+            index=models.Index(fields=['agentic_task', 'created_at'], name='run_agentic_task_created_idx'),
         ),
         migrations.AddIndex(
             model_name='agentrun',
@@ -169,7 +169,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='agentruncheckpoint',
-            index=models.Index(fields=['automation', 'status', 'updated_at'], name='checkpoint_auto_status_idx'),
+            index=models.Index(fields=['agentic_task', 'status', 'updated_at'], name='checkpoint_task_status_idx'),
         ),
         migrations.AddIndex(
             model_name='agentruncheckpoint',
@@ -201,7 +201,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name='agentrunnotification',
-            index=models.Index(fields=['automation', 'created_at'], name='run_notif_automation_idx'),
+            index=models.Index(fields=['agentic_task', 'created_at'], name='run_notif_agentic_task_idx'),
         ),
         migrations.AddIndex(
             model_name='agentrunnotification',

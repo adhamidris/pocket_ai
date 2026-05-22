@@ -95,11 +95,11 @@ from .tool_handlers.agent_run import (
     _start_agent_run_handler,
 )
 from .tool_handlers.tasks import (
-    _draft_task_handler,
+    _draft_agentic_task_handler,
     _list_tasks_handler,
-    _pause_task_handler,
-    _request_task_activation_handler,
-    _update_task_handler,
+    _pause_agentic_task_handler,
+    _request_agentic_task_activation_handler,
+    _update_agentic_task_handler,
 )
 from .tool_handlers.memory import (
     _forget_memory_handler,
@@ -265,10 +265,10 @@ _TOOL_HANDLERS: dict[str, ToolHandler] = {
     "get_agent_run": _get_agent_run_handler,
     "continue_agent_run": _continue_agent_run_handler,
     "list_tasks": _list_tasks_handler,
-    "draft_task": _draft_task_handler,
-    "update_task": _update_task_handler,
-    "request_task_activation": _request_task_activation_handler,
-    "pause_task": _pause_task_handler,
+    "draft_agentic_task": _draft_agentic_task_handler,
+    "update_agentic_task": _update_agentic_task_handler,
+    "request_agentic_task_activation": _request_agentic_task_activation_handler,
+    "pause_agentic_task": _pause_agentic_task_handler,
     "search_memory": _search_memory_handler,
     "save_memory": _save_memory_handler,
     "forget_memory": _forget_memory_handler,
